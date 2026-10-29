@@ -1,0 +1,7 @@
+<Solution>
+  <Project Path="NODUS.API/NODUS.API.csproj" Id="562f3789-3e7f-4f8d-aa94-ec7e198e9270" />
+  <Project Path="NODUS.Data/NODUS.Data.csproj" />
+  <Project Path="NODUS.Models/NODUS.Models.csproj" />
+  <Project Path="NODUS.Services/NODUS.Services.csproj" />
+  <Project Path="NODUS.WPF/NODUS.WPF.csproj" />
+</Solution>
