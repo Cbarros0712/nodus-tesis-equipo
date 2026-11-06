@@ -22,7 +22,10 @@ import {
   IconMap2,
   IconMenu2,
   IconX,
-  IconAlertTriangle
+  IconAlertTriangle,
+  IconTag,
+  IconBuilding,
+  IconHeartbeat
 } from '@tabler/icons-react';
 import api, { configurarSesion } from './api';
 import { cargarSesion, guardarSesion, borrarSesion, destinoSeguro } from './sesion';
@@ -78,7 +81,10 @@ function Sidebar({ auth, onLogout, mobileOpen, onNavigate }) {
     '/hospitalesexternos': 'prestamos',
     '/mapaprestamos': 'prestamos',
     '/remitos': 'prestamos',
-    '/usuarios': 'admin'
+    '/usuarios': 'admin',
+    '/marcas': 'admin',
+    '/sectores': 'admin',
+    '/servicios': 'admin'
   };
 
   const moduloActivo = moduloDeRuta[location.pathname];
@@ -101,6 +107,18 @@ function Sidebar({ auth, onLogout, mobileOpen, onNavigate }) {
   const toggle = (mod) => {
     setAbiertos(prev => ({ ...prev, [mod]: !prev[mod] }));
   };
+
+  // Propiedades para que el título de grupo se use con mouse y teclado (Tab + Enter/Espacio)
+  const propsGrupo = (mod) => ({
+    className: 'sn-group-title sn-group-clickable',
+    role: 'button',
+    tabIndex: 0,
+    'aria-expanded': !!abiertos[mod],
+    onClick: () => toggle(mod),
+    onKeyDown: (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(mod); }
+    }
+  });
 
   const veePrestamos = puedeVerModulo(rol, 'prestamos');
   const [porVencer, setPorVencer] = useState(0);
@@ -157,6 +175,7 @@ function Sidebar({ auth, onLogout, mobileOpen, onNavigate }) {
 
       {}
       <nav
+        aria-label="Menú principal"
         className="sn-nav"
         onClick={(e) => { if (e.target.closest('.sn-item')) onNavigate?.(); }}
       >
@@ -164,10 +183,7 @@ function Sidebar({ auth, onLogout, mobileOpen, onNavigate }) {
         {}
         {puedeVerModulo(rol, 'patrimonial') && (
           <>
-            <div
-              className="sn-group-title sn-group-clickable"
-              onClick={() => toggle('patrimonial')}
-            >
+            <div {...propsGrupo('patrimonial')}>
               <IconLayoutDashboard size={14} stroke={2} />
               <span>Gestión patrimonial</span>
               {!abiertos.patrimonial && badgeGarantias}
@@ -183,7 +199,7 @@ function Sidebar({ auth, onLogout, mobileOpen, onNavigate }) {
                   <IconMapPin size={16} stroke={2} />
                   <span>Ubicaciones</span>
                 </NavLink>
-                {(rol === 'Administrador' || rol === 'Jefe patrimonio') && (
+                {puedeHacer(rol, 'editar_activo') && (
                   <NavLink to="/bajaspatrimoniales" className="sn-item">
                     <IconArchive size={16} stroke={2} />
                     <span>Bajas patrimoniales</span>
@@ -197,10 +213,7 @@ function Sidebar({ auth, onLogout, mobileOpen, onNavigate }) {
         {}
         {puedeVerModulo(rol, 'mantenimiento') && (
           <>
-            <div
-              className="sn-group-title sn-group-clickable"
-              onClick={() => toggle('mantenimiento')}
-            >
+            <div {...propsGrupo('mantenimiento')}>
               <IconTools size={14} stroke={2} />
               <span>Gestión de mantenimiento</span>
             </div>
@@ -232,10 +245,7 @@ function Sidebar({ auth, onLogout, mobileOpen, onNavigate }) {
         {}
         {puedeVerModulo(rol, 'insumos') && (
           <>
-            <div
-              className="sn-group-title sn-group-clickable"
-              onClick={() => toggle('insumos')}
-            >
+            <div {...propsGrupo('insumos')}>
               <IconPackage size={14} stroke={2} />
               <span>Gestión de insumos</span>
             </div>
@@ -257,10 +267,7 @@ function Sidebar({ auth, onLogout, mobileOpen, onNavigate }) {
         {}
         {puedeVerModulo(rol, 'prestamos') && (
           <>
-            <div
-              className="sn-group-title sn-group-clickable"
-              onClick={() => toggle('prestamos')}
-            >
+            <div {...propsGrupo('prestamos')}>
               <IconArrowsExchange size={14} stroke={2} />
               <span>Gestión de préstamos</span>
               {!abiertos.prestamos && badgePorVencer}
@@ -292,10 +299,7 @@ function Sidebar({ auth, onLogout, mobileOpen, onNavigate }) {
         {}
         {puedeVerModulo(rol, 'reportes') && (
           <>
-            <div
-              className="sn-group-title sn-group-clickable"
-              onClick={() => toggle('reportes')}
-            >
+            <div {...propsGrupo('reportes')}>
               <IconChartBar size={14} stroke={2} />
               <span>Reportes</span>
             </div>
@@ -317,10 +321,7 @@ function Sidebar({ auth, onLogout, mobileOpen, onNavigate }) {
         {}
         {puedeVerModulo(rol, 'administracion') && (
           <>
-            <div
-              className="sn-group-title sn-group-clickable"
-              onClick={() => toggle('admin')}
-            >
+            <div {...propsGrupo('admin')}>
               <IconShieldLock size={14} stroke={2} />
               <span>Administración</span>
             </div>
@@ -329,6 +330,18 @@ function Sidebar({ auth, onLogout, mobileOpen, onNavigate }) {
                 <NavLink to="/usuarios" className="sn-item">
                   <IconUsers size={16} stroke={2} />
                   <span>Usuarios</span>
+                </NavLink>
+                <NavLink to="/marcas" className="sn-item">
+                  <IconTag size={16} stroke={2} />
+                  <span>Marcas</span>
+                </NavLink>
+                <NavLink to="/sectores" className="sn-item">
+                  <IconBuilding size={16} stroke={2} />
+                  <span>Sectores</span>
+                </NavLink>
+                <NavLink to="/servicios" className="sn-item">
+                  <IconHeartbeat size={16} stroke={2} />
+                  <span>Servicios</span>
                 </NavLink>
               </div>
             )}
@@ -344,7 +357,7 @@ function Sidebar({ auth, onLogout, mobileOpen, onNavigate }) {
           <div className="sn-user-name">{auth.usuario.nombre}</div>
           <div className="sn-user-role">{auth.usuario.rol}</div>
         </div>
-        <button className="sn-logout-btn" onClick={onLogout} title="Cerrar sesión">
+        <button className="sn-logout-btn" onClick={onLogout} title="Cerrar sesión" aria-label="Cerrar sesión">
           <IconLogout size={18} stroke={2} />
         </button>
       </div>
@@ -473,9 +486,9 @@ function AppRutas() {
       <main className="content">
         <Routes>
           <Route path="/" element={<Bienvenida auth={auth} />} />
-          <Route path="/marcas" element={<Marcas />} />
-          <Route path="/sectores" element={<Sectores />} />
-          <Route path="/servicios" element={<Servicios />} />
+          <Route path="/marcas" element={<RutaProtegida auth={auth} modulo="administracion"><Marcas /></RutaProtegida>} />
+          <Route path="/sectores" element={<RutaProtegida auth={auth} modulo="administracion"><Sectores /></RutaProtegida>} />
+          <Route path="/servicios" element={<RutaProtegida auth={auth} modulo="administracion"><Servicios /></RutaProtegida>} />
           <Route path="/activos" element={<RutaProtegida auth={auth} modulo="patrimonial"><Activos /></RutaProtegida>} />
           <Route path="/ficha/:idEquipo" element={<FichaEquipo auth={auth} />} />
           <Route path="/equipos/:idEquipo/qr" element={<FichaQR auth={auth} onLogout={handleLogout} />} />
@@ -483,20 +496,20 @@ function AppRutas() {
           <Route path="/equipos" element={<Navigate to="/activos" />} />
           <Route path="/ubicaciones" element={<RutaProtegida auth={auth} modulo="patrimonial"><Ubicaciones /></RutaProtegida>} />
           <Route path="/insumos" element={<RutaProtegida auth={auth} modulo="insumos"><Insumos /></RutaProtegida>} />
-          <Route path="/ordenestrabajo" element={<RutaProtegida auth={auth} modulo="mantenimiento"><OrdenesTrabajo /></RutaProtegida>} />
-          <Route path="/intervenciones" element={<RutaProtegida auth={auth} modulo="mantenimiento"><Intervenciones /></RutaProtegida>} />
+          <Route path="/ordenestrabajo" element={<RutaProtegida auth={auth} modulo="mantenimiento"><OrdenesTrabajo auth={auth} /></RutaProtegida>} />
+          <Route path="/intervenciones" element={<RutaProtegida auth={auth} modulo="mantenimiento"><Intervenciones auth={auth} /></RutaProtegida>} />
           <Route path="/usosinsumo" element={<RutaProtegida auth={auth} modulo="insumos"><UsosInsumo /></RutaProtegida>} />
-          <Route path="/alertas" element={<Alertas auth={auth} />} />
+          <Route path="/alertas" element={<RutaProtegida auth={auth} modulo="patrimonial"><Alertas auth={auth} /></RutaProtegida>} />
           <Route path="/bajaspatrimoniales" element={<RutaProtegida auth={auth} modulo="patrimonial"><BajasPatrimoniales /></RutaProtegida>} />
-          <Route path="/hojasdevida" element={<RutaProtegida auth={auth} modulo="mantenimiento"><HojasDeVida /></RutaProtegida>} />
+          <Route path="/hojasdevida" element={<RutaProtegida auth={auth} modulo="mantenimiento"><HojasDeVida auth={auth} /></RutaProtegida>} />
           <Route path="/usuarios" element={<RutaProtegida auth={auth} modulo="administracion"><Usuarios /></RutaProtegida>} />
           <Route path="/prestamos" element={<RutaProtegida auth={auth} modulo="prestamos"><Prestamos auth={auth} /></RutaProtegida>} />
           <Route path="/hospitalesexternos" element={<RutaProtegida auth={auth} modulo="prestamos"><HospitalesExternos /></RutaProtegida>} />
           <Route path="/mapaprestamos" element={<RutaProtegida auth={auth} modulo="prestamos"><MapaPrestamos /></RutaProtegida>} />
           <Route path="/remitos" element={<RutaProtegida auth={auth} modulo="prestamos"><Remitos /></RutaProtegida>} />
-          <Route path="*" element={<Navigate to="/" />} />
           <Route path="/reportes" element={<RutaProtegida auth={auth} modulo="reportes"><Reportes /></RutaProtegida>} />
           <Route path="/reportes/listados" element={<RutaProtegida auth={auth} modulo="reportes"><Reportes /></RutaProtegida>} />
+          <Route path="*" element={<Navigate to="/" />} />
         </Routes>
       </main>
     </div>

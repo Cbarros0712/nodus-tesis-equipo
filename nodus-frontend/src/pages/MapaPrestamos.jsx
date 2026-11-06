@@ -1,8 +1,9 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import api from '../api';
+import { useToast, mensajeDeError } from '../components/Toast';
 
 const CENTRO_CORDOBA = [-31.4167, -64.1833];
 
@@ -10,10 +11,10 @@ const iconoHospital = (cantidad, vencido) => L.divIcon({
   className: '',
   html: `<div style="
     width:34px;height:34px;border-radius:50%;
-    background:${vencido ? '#E85A6D' : '#2C7DA0'};color:white;
+    background:${vencido ? '#B93B1B' : '#1F6E8F'};color:white;
     border:3px solid white;box-shadow:0 2px 8px rgba(0,0,0,0.35);
     display:flex;align-items:center;justify-content:center;
-    font:700 13px system-ui,sans-serif;">${cantidad}</div>`,
+    font:700 13px system-ui,sans-serif;">${cantidad}${vencido ? '!' : ''}</div>`,
   iconSize: [34, 34],
   iconAnchor: [17, 17],
   popupAnchor: [0, -18]
@@ -26,7 +27,12 @@ const iconoSeleccion = L.divIcon({
   iconAnchor: [9, 9]
 });
 
-const estaVencido = (p) => p.fechaEstimadaDevolucion && new Date(p.fechaEstimadaDevolucion) < new Date();
+const hoyLocal = () => {
+  const d = new Date();
+  const dos = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${dos(d.getMonth() + 1)}-${dos(d.getDate())}`;
+};
+const estaVencido = (p) => !!p.fechaEstimadaDevolucion && p.fechaEstimadaDevolucion.split('T')[0] < hoyLocal();
 const fecha = (iso) => iso ? iso.split('T')[0].split('-').reverse().join('/') : '—';
 
 const parsearCoordenadas = (texto) => {
@@ -52,6 +58,10 @@ function ClickEnMapa({ activo, onClick }) {
 }
 
 function MapaPrestamos() {
+  const toast = useToast();
+  const montado = useRef(true);
+  useEffect(() => () => { montado.current = false; }, []);
+  const [guardando, setGuardando] = useState(false);
   const [prestamos, setPrestamos] = useState([]);
   const [hospitales, setHospitales] = useState([]);
   const [cargando, setCargando] = useState(true);
@@ -69,17 +79,19 @@ function MapaPrestamos() {
   const cargar = () =>
     Promise.all([api.get('/prestamos/mapa'), api.get('/hospitalesexternos')])
       .then(([rm, rh]) => {
+        if (!montado.current) return;
         setPrestamos(rm.data);
         setHospitales(rh.data);
         setErrorCarga('');
       })
       .catch((err) => {
+        if (!montado.current) return;
         const status = err.response?.status;
         setErrorCarga(status
           ? `No se pudieron cargar los préstamos (error ${status} de la API). Si la API se actualizó, reiniciala.`
           : 'No se pudo conectar con la API.');
       })
-      .finally(() => setCargando(false));
+      .finally(() => { if (montado.current) setCargando(false); });
 
   useEffect(() => { cargar(); }, []);
 
@@ -115,16 +127,18 @@ function MapaPrestamos() {
   const prestamosFueraDelMapa = prestamos.filter(p => p.latitud == null || p.longitud == null).length;
 
   const geocodificar = async () => {
+    if (geocodificando) return;
     setGeocodificando(true);
     setResultadoGeo(null);
     try {
       const r = await api.post('/hospitalesexternos/geocodificar');
       setResultadoGeo(r.data);
+      toast.success('Búsqueda terminada', `${r.data.geocodificados.length} hospital(es) ubicado(s), ${r.data.sinResultado.length} sin resultado`);
       await cargar();
     } catch {
       setResultadoGeo({ error: 'No se pudo completar la geocodificación. Revisá la conexión e intentá de nuevo.' });
     } finally {
-      setGeocodificando(false);
+      if (montado.current) setGeocodificando(false);
     }
   };
 
@@ -141,18 +155,27 @@ function MapaPrestamos() {
   };
 
   const guardarCoordenadas = async () => {
+    if (guardando) return;
+    if (!String(lat).trim() || !String(lng).trim()) {
+      setErrorCoord('Completá la latitud y la longitud, o hacé click en el mapa.');
+      return;
+    }
     const la = parseFloat(String(lat).replace(',', '.'));
     const ln = parseFloat(String(lng).replace(',', '.'));
     if (Number.isNaN(la) || Number.isNaN(ln) || Math.abs(la) > 90 || Math.abs(ln) > 180) {
-      setErrorCoord('Latitud o longitud inválida.');
+      setErrorCoord('Latitud o longitud inválida (latitud entre -90 y 90, longitud entre -180 y 180).');
       return;
     }
+    setGuardando(true);
     try {
       await api.put(`/hospitalesexternos/${editandoId}/coordenadas`, { latitud: la, longitud: ln });
       cerrarEdicion();
+      toast.success('Coordenadas guardadas', 'El hospital ya aparece en el mapa si tiene préstamos activos.');
       cargar();
-    } catch {
-      setErrorCoord('No se pudieron guardar las coordenadas.');
+    } catch (err) {
+      setErrorCoord(mensajeDeError(err, 'No se pudieron guardar las coordenadas.'));
+    } finally {
+      if (montado.current) setGuardando(false);
     }
   };
 
@@ -168,14 +191,20 @@ function MapaPrestamos() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
           <h2 style={{ fontSize: 16, fontWeight: 700, color: '#1a1a1a', margin: 0, letterSpacing: '0.5px' }}>GESTIÓN DE PRÉSTAMOS</h2>
           <span style={{
-            background: 'rgba(124, 110, 250, 0.12)', color: '#5e51d6',
+            background: 'rgba(124, 110, 250, 0.12)', color: '#4B3FBF',
             border: '1px solid rgba(124, 110, 250, 0.25)', padding: '4px 12px', borderRadius: 8,
             fontSize: 12, fontWeight: 600
           }}>MAPA DE PRÉSTAMOS</span>
-          <p style={{ fontSize: 13, color: '#6B7C8C', margin: 0 }}>Ubicación de los equipos prestados actualmente</p>
+          <p style={{ fontSize: 13, color: '#5C6B7A', margin: 0 }}>Ubicación de los equipos prestados actualmente</p>
         </div>
 
-        {errorCarga && <div style={bannerError}>⚠ {errorCarga}</div>}
+        {errorCarga && (
+          <div role="alert" style={bannerError}>
+            ⚠ {errorCarga}{' '}
+            <button type="button" onClick={cargar} style={{ ...btnGhost, marginLeft: 8 }}>Reintentar</button>
+          </div>
+        )}
+        {cargando && <div role="status" style={{ fontSize: 13, color: '#5C6B7A', marginTop: 12 }}>Cargando mapa…</div>}
 
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 16 }}>
           <span style={chipResumen}>🤝 {prestamos.length} préstamo(s) activo(s)</span>
@@ -190,8 +219,8 @@ function MapaPrestamos() {
 
       <div style={{ padding: '16px 24px 24px', background: 'white', display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'stretch' }}>
         {}
-        <div style={{ flex: '1 1 480px', minWidth: 0, position: 'relative' }}>
-          <MapContainer center={CENTRO_CORDOBA} zoom={12} style={{ height: '70vh', minHeight: 420, borderRadius: 12, border: '1px solid #E5EDF3' }}>
+        <div role="region" aria-label="Mapa de préstamos activos" style={{ flex: '1 1 480px', minWidth: 0, position: 'relative' }}>
+          <MapContainer center={CENTRO_CORDOBA} zoom={12} style={{ height: '70vh', minHeight: 420, borderRadius: 12, border: '1px solid #8493A2' }}>
             <TileLayer
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
@@ -202,15 +231,15 @@ function MapaPrestamos() {
             }} />
 
             {marcadores.map(m => (
-              <Marker key={m.idHospital} position={m.posicion} icon={iconoHospital(m.prestamos.length, m.prestamos.some(estaVencido))}>
+              <Marker key={m.idHospital} position={m.posicion} title={`${m.hospital}: ${m.prestamos.length} préstamo(s) activo(s)${m.prestamos.some(estaVencido) ? ', con vencidos' : ''}`} icon={iconoHospital(m.prestamos.length, m.prestamos.some(estaVencido))}>
                 <Popup maxWidth={320}>
                   <div style={{ fontSize: 13 }}>
                     <div style={{ fontWeight: 700, fontSize: 14, color: '#1a1a1a' }}>{m.hospital}</div>
-                    <div style={{ color: '#6B7C8C', marginTop: 2 }}>{[m.direccion, m.localidad].filter(Boolean).join(', ') || 'Sin dirección'}</div>
+                    <div style={{ color: '#5C6B7A', marginTop: 2 }}>{[m.direccion, m.localidad].filter(Boolean).join(', ') || 'Sin dirección'}</div>
                     {(m.contacto || m.telefono) && (
                       <div style={{ color: '#4A5868', marginTop: 4 }}>👤 {[m.contacto, m.telefono].filter(Boolean).join(' · ')}</div>
                     )}
-                    <div style={{ fontWeight: 600, marginTop: 10, marginBottom: 4, fontSize: 11, color: '#6B7C8C', textTransform: 'uppercase' }}>
+                    <div style={{ fontWeight: 600, marginTop: 10, marginBottom: 4, fontSize: 11, color: '#5C6B7A', textTransform: 'uppercase' }}>
                       Equipos prestados ({m.prestamos.length})
                     </div>
                     <div style={{ maxHeight: 220, overflowY: 'auto' }}>
@@ -218,16 +247,16 @@ function MapaPrestamos() {
                         <div key={p.idPrestamo} style={{ padding: '6px 0', borderTop: '1px solid #F1F4F7' }}>
                           <div style={{ fontWeight: 600 }}>
                             {[p.tipoActivo, p.marca, p.modelo].filter(Boolean).join(' · ')}
-                            {estaVencido(p) && <span style={{ color: '#E85A6D', marginLeft: 6, fontSize: 11 }}>VENCIDO</span>}
+                            {estaVencido(p) && <span style={{ color: '#B93B1B', marginLeft: 6, fontSize: 11, fontWeight: 700 }}>VENCIDO</span>}
                           </div>
-                          <div style={{ color: '#6B7C8C', fontSize: 12 }}>
+                          <div style={{ color: '#5C6B7A', fontSize: 12 }}>
                             N° serie {p.nroSerie} · desde {fecha(p.fechaPrestamo)}
                             {p.fechaEstimadaDevolucion && ` · vuelve ${fecha(p.fechaEstimadaDevolucion)}`}
                           </div>
                           {p.componentes?.length > 0 && (
-                            <div style={{ color: '#6B7C8C', fontSize: 12 }}>Con: {p.componentes.join(', ')}</div>
+                            <div style={{ color: '#5C6B7A', fontSize: 12 }}>Con: {p.componentes.join(', ')}</div>
                           )}
-                          {p.responsable && <div style={{ color: '#6B7C8C', fontSize: 12 }}>Registró: {p.responsable}</div>}
+                          {p.responsable && <div style={{ color: '#5C6B7A', fontSize: 12 }}>Registró: {p.responsable}</div>}
                         </div>
                       ))}
                     </div>
@@ -245,17 +274,17 @@ function MapaPrestamos() {
         </div>
 
         {}
-        <aside style={{ flex: '0 1 340px', minWidth: 280, border: '1px solid #E5EDF3', borderRadius: 12, display: 'flex', flexDirection: 'column', maxHeight: '70vh', minHeight: 420 }}>
+        <aside aria-label="Hospitales sin ubicación" style={{ flex: '0 1 340px', minWidth: 280, border: '1px solid #8493A2', borderRadius: 12, display: 'flex', flexDirection: 'column', maxHeight: '70vh', minHeight: 420 }}>
           <div style={{ padding: '16px 18px', borderBottom: '1px solid #F0F3F7' }}>
             <div style={{ fontWeight: 700, fontSize: 14, color: '#1a1a1a' }}>Hospitales sin ubicación ({sinCoordenadas.length})</div>
-            <p style={{ margin: '4px 0 12px', fontSize: 12, color: '#6B7C8C' }}>
+            <p style={{ margin: '4px 0 12px', fontSize: 12, color: '#5C6B7A' }}>
               No aparecen en el mapa hasta tener coordenadas.
             </p>
-            <button onClick={geocodificar} disabled={geocodificando || sinCoordenadas.length === 0} style={{ ...btnSave, width: '100%', opacity: geocodificando || sinCoordenadas.length === 0 ? 0.6 : 1 }}>
+            <button type="button" onClick={geocodificar} disabled={geocodificando || sinCoordenadas.length === 0} style={{ ...btnSave, width: '100%', opacity: geocodificando || sinCoordenadas.length === 0 ? 0.6 : 1 }}>
               {geocodificando ? `Buscando... (~${Math.ceil(sinCoordenadas.length * 2.2)} seg)` : '📍 Buscar coordenadas automáticamente'}
             </button>
             {resultadoGeo && (
-              <div style={{ marginTop: 10, fontSize: 12, color: resultadoGeo.error ? '#842029' : '#1E6B45' }}>
+              <div role="status" style={{ marginTop: 10, fontSize: 12, color: resultadoGeo.error ? '#842029' : '#1E6B45' }}>
                 {resultadoGeo.error
                   ? `⚠ ${resultadoGeo.error}`
                   : `✓ ${resultadoGeo.geocodificados.length} ubicado(s) · ${resultadoGeo.sinResultado.length} sin resultado`}
@@ -265,7 +294,7 @@ function MapaPrestamos() {
 
           <div style={{ overflowY: 'auto', flex: 1 }}>
             {sinCoordenadas.length === 0 && (
-              <div style={{ padding: 24, textAlign: 'center', color: '#9E9CBB', fontSize: 13 }}>
+              <div style={{ padding: 24, textAlign: 'center', color: '#5C6B7A', fontSize: 13 }}>
                 ✓ Todos los hospitales tienen coordenadas.
               </div>
             )}
@@ -274,7 +303,7 @@ function MapaPrestamos() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start' }}>
                   <div style={{ minWidth: 0 }}>
                     <div style={{ fontWeight: 600, fontSize: 13, color: '#2D3748' }}>{h.nombre}</div>
-                    <div style={{ fontSize: 12, color: '#6B7C8C' }}>{[h.direccion, h.localidad].filter(Boolean).join(', ') || 'Sin dirección cargada'}</div>
+                    <div style={{ fontSize: 12, color: '#5C6B7A' }}>{[h.direccion, h.localidad].filter(Boolean).join(', ') || 'Sin dirección cargada'}</div>
                     {activosPorHospital[h.idHospital] > 0 && (
                       <span style={{ display: 'inline-block', marginTop: 4, fontSize: 11, fontWeight: 600, color: '#8A5A00', background: '#FFF4E5', padding: '2px 8px', borderRadius: 6 }}>
                         {activosPorHospital[h.idHospital]} préstamo(s) activo(s)
@@ -282,31 +311,31 @@ function MapaPrestamos() {
                     )}
                   </div>
                   {editandoId !== h.idHospital && (
-                    <button onClick={() => abrirEdicion(h)} style={btnChico}>Cargar</button>
+                    <button type="button" onClick={() => abrirEdicion(h)} aria-label={`Cargar coordenadas de ${h.nombre}`} style={btnChico}>Cargar</button>
                   )}
                 </div>
 
                 {editandoId === h.idHospital && (
-                  <div style={{ marginTop: 10 }}>
-                    <label style={lblStyle}>Pegar coordenadas</label>
-                    <input value={pegado} onChange={e => alPegar(e.target.value)} placeholder="-31.4064, -64.1580" style={inpStyle} />
+                  <div style={{ marginTop: 10 }} onKeyDown={(e) => { if (e.key === 'Escape') cerrarEdicion(); }}>
+                    <label htmlFor="geo-pegado" style={lblStyle}>Pegar coordenadas</label>
+                    <input id="geo-pegado" autoFocus value={pegado} onChange={e => alPegar(e.target.value)} placeholder="-31.4064, -64.1580" style={inpStyle} />
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
                       <div>
-                        <label style={lblStyle}>Latitud</label>
-                        <input value={lat} onChange={e => setLat(e.target.value)} placeholder="-31.4064" style={inpStyle} />
+                        <label htmlFor="geo-lat" style={lblStyle}>Latitud</label>
+                        <input id="geo-lat" inputMode="decimal" value={lat} onChange={e => setLat(e.target.value)} placeholder="-31.4064" style={inpStyle} />
                       </div>
                       <div>
-                        <label style={lblStyle}>Longitud</label>
-                        <input value={lng} onChange={e => setLng(e.target.value)} placeholder="-64.1580" style={inpStyle} />
+                        <label htmlFor="geo-lng" style={lblStyle}>Longitud</label>
+                        <input id="geo-lng" inputMode="decimal" value={lng} onChange={e => setLng(e.target.value)} placeholder="-64.1580" style={inpStyle} />
                       </div>
                     </div>
-                    <p style={{ fontSize: 11, color: '#6B7C8C', margin: '8px 0 0' }}>
+                    <p style={{ fontSize: 11, color: '#5C6B7A', margin: '8px 0 0' }}>
                       También podés hacer click en el mapa para marcar la ubicación.
                     </p>
-                    {errorCoord && <span style={errStyle}>⚠ {errorCoord}</span>}
+                    {errorCoord && <span role="alert" style={errStyle}>⚠ {errorCoord}</span>}
                     <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 10 }}>
-                      <button onClick={cerrarEdicion} style={btnGhost}>Cancelar</button>
-                      <button onClick={guardarCoordenadas} style={btnSave}>✓ Guardar</button>
+                      <button type="button" onClick={cerrarEdicion} disabled={guardando} style={btnGhost}>Cancelar</button>
+                      <button type="button" onClick={guardarCoordenadas} disabled={guardando} style={{ ...btnSave, opacity: guardando ? 0.6 : 1 }}>{guardando ? 'Guardando…' : '✓ Guardar'}</button>
                     </div>
                   </div>
                 )}
@@ -321,11 +350,11 @@ function MapaPrestamos() {
 
 const chipResumen = { background: '#F0F6FA', color: '#4A5868', padding: '6px 12px', borderRadius: 8, fontSize: 12, fontWeight: 600 };
 const lblStyle = { display: 'block', fontSize: 11, fontWeight: 600, color: '#4A5868', marginBottom: 4 };
-const inpStyle = { width: '100%', padding: '8px 10px', border: '1.5px solid #E5EDF3', borderRadius: 8, fontSize: 13, background: '#FAFBFC', outline: 'none', boxSizing: 'border-box' };
-const errStyle = { display: 'block', color: '#E85A6D', fontSize: 11, marginTop: 6, fontWeight: 500 };
-const btnGhost = { background: 'white', color: '#6B7C8C', border: '1px solid #E5EDF3', padding: '8px 14px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer' };
-const btnSave = { background: 'linear-gradient(135deg, #2C7DA0 0%, #4A9BB8 100%)', color: 'white', border: 'none', padding: '9px 16px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer' };
-const btnChico = { background: '#F0F6FA', color: '#2C7DA0', border: 'none', borderRadius: 6, padding: '6px 10px', fontSize: 11, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' };
+const inpStyle = { width: '100%', padding: '8px 10px', border: '1.5px solid #8493A2', borderRadius: 8, fontSize: 13, background: 'white', outline: 'none', boxSizing: 'border-box' };
+const errStyle = { display: 'block', color: '#B93B1B', fontSize: 12, marginTop: 6, fontWeight: 600 };
+const btnGhost = { background: 'white', color: '#5C6B7A', border: '1px solid #8493A2', padding: '8px 14px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer' };
+const btnSave = { background: 'linear-gradient(135deg, #1B6585 0%, #1F6E8F 100%)', color: 'white', border: 'none', padding: '9px 16px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer' };
+const btnChico = { background: '#F0F6FA', color: '#1F6E8F', border: 'none', borderRadius: 6, padding: '8px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' };
 const bannerError = { background: '#FDECEE', border: '1px solid #F5C2C7', color: '#842029', padding: '12px 14px', borderRadius: 10, fontSize: 13, marginTop: 14 };
 const avisoSobreMapa = { position: 'absolute', top: 12, left: '50%', transform: 'translateX(-50%)', zIndex: 500, background: 'white', padding: '8px 14px', borderRadius: 8, boxShadow: '0 2px 10px rgba(0,0,0,0.15)', fontSize: 13, color: '#4A5868' };
 

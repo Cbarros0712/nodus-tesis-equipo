@@ -9,13 +9,31 @@ import {
   diasParaVencerGarantia, garantiaPorVencer, garantiaVencida, textoVence
 } from '../vencimientos';
 import { urlQrEquipo, apuntaALocalhost, imagenQr, AVISO_QR_LOCALHOST } from '../qr';
+import { useToast, mensajeDeError } from '../components/Toast';
 
 const fechaDMY = (iso) => iso ? iso.split('T')[0].split('-').reverse().join('/') : '—';
+
+// Las fechas se manejan como texto "AAAA-MM-DD" en hora local, para evitar el
+// corrimiento de un día que produce new Date("2026-11-05") (se interpreta en UTC).
+const fechaAISO = (d) => {
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${d.getFullYear()}-${mm}-${dd}`;
+};
+const ISOAFecha = (s) => {
+  if (!s) return null;
+  const [y, m, d] = s.split('-').map(Number);
+  return new Date(y, m - 1, d);
+};
 
 const CustomDateInput = forwardRef(({ value, onClick }, ref) => (
   <div
     onClick={onClick}
+    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } }}
     ref={ref}
+    role="button"
+    tabIndex={0}
+    aria-label={value ? `Fecha seleccionada: ${value}. Presioná Enter para cambiarla` : 'Elegir fecha'}
     style={{
       width: "100%",
       minHeight: "56px",
@@ -42,7 +60,7 @@ const CustomDateInput = forwardRef(({ value, onClick }, ref) => (
     <span
       style={{
         flex: 1,
-        color: value ? "#1F2937" : "#9CA3AF",
+        color: value ? "#1F2937" : "#6B7280",
         fontSize: "14px",
         textAlign: "center",
         whiteSpace: "nowrap",
@@ -53,24 +71,25 @@ const CustomDateInput = forwardRef(({ value, onClick }, ref) => (
     >
       {value || "dd/mm/aaaa"}
     </span>
-    <FiCalendar color="#6B7C8C" size={18} />
+    <FiCalendar color="#5C6B7A" size={18} />
   </div>
 ));
 
 const ID_ESTADO_EN_SERVICIO = 1;
 
 function Activos() {
+  const toast = useToast();
   const [equipos, setEquipos] = useState([]);
   const [marcas, setMarcas] = useState([]);
   const [tipos, setTipos] = useState([]);
   const [estados, setEstados] = useState([]);
   const [alertas, setAlertas] = useState([]);
 
-  const anioActual = new Date().getFullYear();
-  const inicioAnio = new Date(anioActual, 0, 1);
-  const finAnio = new Date(anioActual, 11, 31);
-
   const hoy = new Date();
+  const anioActual = hoy.getFullYear();
+  // Un activo puede haberse adquirido hace años; la garantía puede vencer en el futuro.
+  const minAdquisicion = new Date(anioActual - 40, 0, 1);
+  const maxGarantia = new Date(anioActual + 30, 11, 31);
 
   const [modelo, setModelo] = useState('');
   const [nroSerie, setNroSerie] = useState('');
@@ -80,6 +99,7 @@ function Activos() {
   const [idTipo, setIdTipo] = useState('');
   const [editando, setEditando] = useState(null);
   const [errores, setErrores] = useState({});
+  const [guardando, setGuardando] = useState(false);
   const [componentesSeleccionados, setComponentesSeleccionados] = useState([]);
 
   const [buscadorMarca, setBuscadorMarca] = useState('');
@@ -101,22 +121,28 @@ function Activos() {
   useEffect(() => {
     const handleEsc = (e) => {
       if (e.key !== 'Escape') return;
-      if (modalAlertasEquipo) setModalAlertasEquipo(null);
+      if (modalQrEquipo) setModalQrEquipo(null);
+      else if (modalAlertasEquipo) setModalAlertasEquipo(null);
       else if (modalAbierto) cerrarModal();
     };
     window.addEventListener('keydown', handleEsc);
     return () => window.removeEventListener('keydown', handleEsc);
-  }, [modalAbierto, modalAlertasEquipo]);
+  }, [modalAbierto, modalAlertasEquipo, modalQrEquipo]);
+
+  const avisoCarga = (err, que) =>
+    toast.error(`No se pudieron cargar ${que}`, mensajeDeError(err, 'Revisá la conexión e intentá de nuevo.'));
 
   const cargarEquipos = async () => {
-    const r = await api.get('/equipos');
-    setEquipos(r.data);
-    window.dispatchEvent(new CustomEvent(EVENTO_EQUIPOS_ACTUALIZADOS, { detail: r.data }));
+    try {
+      const r = await api.get('/equipos');
+      setEquipos(r.data);
+      window.dispatchEvent(new CustomEvent(EVENTO_EQUIPOS_ACTUALIZADOS, { detail: r.data }));
+    } catch (e) { avisoCarga(e, 'los activos'); }
   };
-  const cargarMarcas  = async () => { const r = await api.get('/marcas'); setMarcas(r.data); };
-  const cargarTipos   = async () => { const r = await api.get('/tiposactivo'); setTipos(r.data); };
-  const cargarEstados = async () => { const r = await api.get('/estadosequipo'); setEstados(r.data); };
-  const cargarAlertas = async () => { const r = await api.get('/alertas'); setAlertas(r.data); };
+  const cargarMarcas  = async () => { try { const r = await api.get('/marcas');         setMarcas(r.data);  } catch (e) { avisoCarga(e, 'las marcas'); } };
+  const cargarTipos   = async () => { try { const r = await api.get('/tiposactivo');    setTipos(r.data);   } catch (e) { avisoCarga(e, 'los tipos de activo'); } };
+  const cargarEstados = async () => { try { const r = await api.get('/estadosequipo');  setEstados(r.data); } catch (e) { avisoCarga(e, 'los estados'); } };
+  const cargarAlertas = async () => { try { const r = await api.get('/alertas');        setAlertas(r.data); } catch (e) { avisoCarga(e, 'las alertas'); } };
 
   const alertasPorEquipo = useMemo(() => {
     const map = {};
@@ -163,6 +189,9 @@ function Activos() {
     [equipos]);
   const cantGarantiaVencida = useMemo(() => equipos.filter(garantiaVencida).length, [equipos]);
 
+  const hayFiltros = tabActivo !== 'todos' || !!busqueda.trim();
+  const limpiarFiltros = () => { setTabActivo('todos'); setBusqueda(''); setBusquedaAbierta(false); };
+
   const abrirModalNuevo = () => { limpiar(); setModalAbierto(true); };
   const abrirModalEditar = (eq) => {
     setModelo(eq.modelo);
@@ -181,9 +210,15 @@ function Activos() {
   const validar = () => {
     const errs = {};
     if (!modelo || !modelo.trim()) errs.modelo = 'Falta ingresar el modelo del activo';
+    else if (modelo.trim().length > 100) errs.modelo = 'El modelo no puede superar los 100 caracteres';
     if (!nroSerie || !nroSerie.trim()) errs.nroSerie = 'El N° de Serie es obligatorio para el registro legal';
+    else if (nroSerie.trim().length > 50) errs.nroSerie = 'El N° de serie no puede superar los 50 caracteres';
+    else if (equipos.some(e =>
+      e.idEquipo !== editando &&
+      e.nroSerie?.trim().toLowerCase() === nroSerie.trim().toLowerCase()
+    )) errs.nroSerie = 'Ya existe un activo registrado con ese N° de serie';
     if (!fechaAdq) errs.fechaAdq = 'Falta seleccionar la fecha de adquisición';
-    else if (fechaAdq > hoy.toLocaleDateString('en-CA')) errs.fechaAdq = 'La fecha de adquisición no puede ser futura';
+    else if (fechaAdq > fechaAISO(new Date())) errs.fechaAdq = 'La fecha de adquisición no puede ser futura';
     if (fechaGar && fechaAdq && fechaGar < fechaAdq) {
       errs.fechaGar = 'La garantía no puede ser anterior a la adquisición';
     }
@@ -193,12 +228,14 @@ function Activos() {
   };
 
   const guardar = async () => {
+    if (guardando) return;
     const errs = validar();
     setErrores(errs);
     if (Object.keys(errs).length > 0) return;
 
     const data = {
-      modelo, nroSerie,
+      modelo: modelo.trim(),
+      nroSerie: nroSerie.trim(),
       fechaAdquisicion: fechaAdq,
       vencimientoGarantia: fechaGar || null,
       idMarca: parseInt(idMarca),
@@ -209,11 +246,14 @@ function Activos() {
         : ID_ESTADO_EN_SERVICIO,
       componentes: componentesSeleccionados
     };
+    setGuardando(true);
     try {
       if (editando) {
         await api.put(`/equipos/${editando}`, { idEquipo: editando, ...data });
+        toast.success('Activo actualizado', `Se guardaron los cambios de ${data.modelo}.`);
       } else {
         await api.post('/equipos', data);
+        toast.success('Activo registrado', `${data.modelo} (S/N ${data.nroSerie}) se agregó al inventario.`);
       }
       cerrarModal();
       cargarEquipos();
@@ -222,6 +262,8 @@ function Activos() {
         ? err.response.data
         : 'No se pudo guardar el activo. Revisá los datos e intentá de nuevo.';
       setErrores({ __general: mensaje });
+    } finally {
+      setGuardando(false);
     }
   };
 
@@ -294,7 +336,7 @@ function Activos() {
   const normalizar = (s) => (s || '')
     .toString()
     .toLowerCase()
-    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
     .replace(/[()]/g, '')
     .trim();
 
@@ -397,30 +439,37 @@ function Activos() {
   }[tipo] || '🔔');
 
   const colorEstadoAlerta = (estado) => {
-    if (estado === 'No leída') return '#FF5E7A';
-    if (estado === 'Leída')    return '#F5A623';
-    return '#9E9CBB';
+    if (estado === 'No leída') return '#B93B1B';
+    if (estado === 'Leída')    return '#8A5A00';
+    return '#5C6B7A';
   };
 
   const tabStyle = (activo) => ({
     padding: '10px 0',
     fontSize: 14,
     fontWeight: activo ? 600 : 400,
-    color: activo ? '#1a1a1a' : '#6B7C8C',
+    color: activo ? '#1a1a1a' : '#5C6B7A',
     borderBottom: activo ? '2px solid #1a1a1a' : '2px solid transparent',
     cursor: 'pointer',
     transition: 'all 0.15s'
   });
 
+  const tabProps = (valor) => ({
+    role: 'button',
+    tabIndex: 0,
+    'aria-pressed': tabActivo === valor,
+    onClick: () => setTabActivo(valor),
+    onKeyDown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setTabActivo(valor); } }
+  });
+
   const inpStyleErr = (campo) => ({
     ...inpStyle,
-    border: errores[campo] ? '1.5px solid #E85A6D' : '1.5px solid #E5EDF3',
+    border: errores[campo] ? '1.5px solid #B93B1B' : '1.5px solid #E5EDF3',
     background: errores[campo] ? '#FFF8F9' : '#FAFBFC'
   });
 
   return (
     <>
-      {}
       <div className="rwd-page-header" style={{ padding: '20px 24px 0', background: 'white' }}>
         <div style={{
           display: 'flex', justifyContent: 'space-between', alignItems: 'center',
@@ -440,7 +489,7 @@ function Activos() {
               fontSize: 12, fontWeight: 600, letterSpacing: '0.5px'
             }}>ACTIVOS</span>
 
-            <p style={{ fontSize: 13, color: '#6B7C8C', margin: 0, marginLeft: 8 }}>
+            <p style={{ fontSize: 13, color: '#5C6B7A', margin: 0, marginLeft: 8 }}>
               Activos médicos del hospital
             </p>
           </div>
@@ -462,63 +511,78 @@ function Activos() {
           display: 'flex', gap: 24, borderBottom: '1px solid #E5EDF3',
           marginTop: 18, alignItems: 'center', flexWrap: 'wrap'
         }}>
-          <div onClick={() => setTabActivo('todos')} style={tabStyle(tabActivo === 'todos')}>
+          <div {...tabProps('todos')} style={tabStyle(tabActivo === 'todos')}>
             Todos ({equipos.length})
           </div>
           {estadosConEquipos.map(estado => (
             <div key={estado.idEstado}
-              onClick={() => setTabActivo(String(estado.idEstado))}
+              {...tabProps(String(estado.idEstado))}
               style={tabStyle(tabActivo === String(estado.idEstado))}
             >
               {estado.nombre} ({estado.cantidad})
             </div>
           ))}
           <span style={{ width: 1, height: 18, background: '#E5EDF3' }} />
-          <div onClick={() => setTabActivo('garantia-porvencer')} style={{ ...tabStyle(tabActivo === 'garantia-porvencer'), display: 'flex', alignItems: 'center', gap: 6 }}>
+          <div {...tabProps('garantia-porvencer')} style={{ ...tabStyle(tabActivo === 'garantia-porvencer'), display: 'flex', alignItems: 'center', gap: 6 }}>
             Garantía por vencer
             <span style={{
               minWidth: 20, padding: '1px 7px', borderRadius: 999, fontSize: 11, fontWeight: 700, textAlign: 'center',
-              background: equiposGarantiaPorVencer.length > 0 ? '#F2A541' : '#EEF1F4',
-              color: equiposGarantiaPorVencer.length > 0 ? 'white' : '#6B7C8C'
+              background: equiposGarantiaPorVencer.length > 0 ? '#FAEEDA' : '#EEF1F4',
+              color: equiposGarantiaPorVencer.length > 0 ? '#633806' : '#5C6B7A',
+              border: equiposGarantiaPorVencer.length > 0 ? '1px solid #EBCF9F' : '1px solid transparent'
             }}>{equiposGarantiaPorVencer.length}</span>
           </div>
-          <div onClick={() => setTabActivo('garantia-vencida')} style={tabStyle(tabActivo === 'garantia-vencida')}>
+          <div {...tabProps('garantia-vencida')} style={tabStyle(tabActivo === 'garantia-vencida')}>
             Garantía vencida ({cantGarantiaVencida})
           </div>
           <div style={{
-            marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6,
-            background: busquedaAbierta ? '#F0F6FA' : 'transparent',
-            borderRadius: 8, padding: busquedaAbierta ? '4px 10px' : '4px',
-            transition: 'all 0.2s'
+            marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap'
           }}>
-            <input
-              type="text" placeholder="Buscar marca, modelo o serie..."
-              value={busqueda} onChange={e => setBusqueda(e.target.value)}
-              autoFocus={busquedaAbierta}
-              style={{
-                background: 'transparent', border: 'none', outline: 'none',
-                fontSize: 13, padding: '4px 0', color: '#4A5868',
-                width: busquedaAbierta ? 200 : 0,
-                transition: 'width 0.2s', overflow: 'hidden'
-              }}
-            />
-            {busqueda && busquedaAbierta && (
-              <span onClick={() => setBusqueda('')} title="Limpiar"
-                style={{ color: '#9E9CBB', fontSize: 14, cursor: 'pointer' }}>✕</span>
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              background: busquedaAbierta ? '#F0F6FA' : 'transparent',
+              borderRadius: 8, padding: busquedaAbierta ? '4px 10px' : '4px',
+              transition: 'all 0.2s'
+            }}>
+              <input
+                type="text" placeholder="Buscar marca, modelo o serie..."
+                aria-label="Buscar activo por marca, modelo o serie"
+                value={busqueda} onChange={e => setBusqueda(e.target.value)}
+                autoFocus={busquedaAbierta}
+                style={{
+                  background: 'transparent', border: 'none', outline: 'none',
+                  fontSize: 13, padding: '4px 0', color: '#4A5868',
+                  width: busquedaAbierta ? 200 : 0,
+                  transition: 'width 0.2s', overflow: 'hidden'
+                }}
+              />
+              {busqueda && busquedaAbierta && (
+                <span onClick={() => setBusqueda('')} title="Limpiar"
+                  style={{ color: '#5C6B7A', fontSize: 14, cursor: 'pointer' }}>✕</span>
+              )}
+              <span
+                onClick={() => {
+                  if (busquedaAbierta && busqueda) { setBusqueda(''); setBusquedaAbierta(false); }
+                  else { setBusquedaAbierta(!busquedaAbierta); }
+                }}
+                title={busquedaAbierta ? 'Cerrar búsqueda' : 'Buscar'}
+                style={{ color: '#5C6B7A', fontSize: 16, cursor: 'pointer' }}
+              >🔍</span>
+            </div>
+            {hayFiltros && (
+              <button
+                onClick={limpiarFiltros}
+                style={{
+                  background: 'transparent', border: '1px solid #E5EDF3', borderRadius: 8,
+                  padding: '6px 10px', fontSize: 12, color: '#2C7DA0',
+                  fontWeight: 600, cursor: 'pointer'
+                }}
+              >Limpiar filtros</button>
             )}
-            <span
-              onClick={() => {
-                if (busquedaAbierta && busqueda) { setBusqueda(''); setBusquedaAbierta(false); }
-                else { setBusquedaAbierta(!busquedaAbierta); }
-              }}
-              title={busquedaAbierta ? 'Cerrar búsqueda' : 'Buscar'}
-              style={{ color: '#6B7C8C', fontSize: 16, cursor: 'pointer' }}
-            >🔍</span>
           </div>
         </div>
       </div>
 
-      {}
       {equiposGarantiaPorVencer.length > 0 && (
         <div style={{ padding: '16px 24px 0', background: 'white' }}>
           <div style={alertaBox}>
@@ -534,10 +598,10 @@ function Activos() {
                       {textoVence(diasParaVencerGarantia(eq))}
                     </span>
                   </div>
-                  <div style={{ fontSize: 11, color: '#9E9CBB', fontFamily: 'monospace' }}>{eq.nroSerie}</div>
+                  <div style={{ fontSize: 11, color: '#5C6B7A', fontFamily: 'monospace' }}>{eq.nroSerie}</div>
                   <div style={{ fontSize: 12, color: '#4A5868', marginTop: 6, lineHeight: 1.6 }}>
                     <div>🛡 Garantía hasta el {fechaDMY(eq.vencimientoGarantia)}</div>
-                    <div>📍 {eq.ubicacionActual || <span style={{ color: '#9E9CBB' }}>Sin ubicación registrada</span>}</div>
+                    <div>📍 {eq.ubicacionActual || <span style={{ color: '#5C6B7A' }}>Sin ubicación registrada</span>}</div>
                   </div>
                 </div>
               ))}
@@ -546,7 +610,6 @@ function Activos() {
         </div>
       )}
 
-      {}
       <div className="rwd-table-wrap" style={{ padding: '20px 24px', background: 'white', overflowX: 'auto' }}>
         <table className="rwd-table" style={{ width: '100%', borderCollapse: 'collapse', minWidth: 800 }}>
           <thead>
@@ -555,24 +618,32 @@ function Activos() {
               <th style={thStyle}>Modelo</th>
               <th style={thStyle}>N° serie</th>
               <th style={thStyle}>Estado</th>
-              <th style={thStyle}>Garantía</th>
-              <th style={thStyle}>Alerta</th>
+              <th style={thStyle}>Garantía hasta</th>
+              <th style={thStyle}>Alertas (cant.)</th>
               <th style={thStyle}>Acciones</th>
             </tr>
           </thead>
           <tbody>
-            {equiposFiltrados.map(eq => {
+            {equiposFiltrados.map((eq, idx) => {
               const cm = colorMarca(eq.marca?.nombre);
               const ce = chipEstado(eq.estadoEquipo?.colorSemaforo);
               const cantAlertas = (alertasPorEquipo[eq.idEquipo] || []).length;
               const porVencer = garantiaPorVencer(eq);
               const vencida = garantiaVencida(eq);
+              const fondo = porVencer ? '#FFF8EC' : (idx % 2 === 1 ? '#F8FAFC' : 'white');
+              const fondoHover = porVencer ? '#FFF1DB' : '#F0F6FA';
               return (
-                <tr key={eq.idEquipo} style={{
-                  borderBottom: '1px solid #F1F4F7',
-                  background: porVencer ? '#FFF8EC' : undefined,
-                  boxShadow: porVencer ? 'inset 3px 0 0 #F2A541' : undefined
-                }}>
+                <tr
+                  key={eq.idEquipo}
+                  style={{
+                    borderBottom: '1px solid #F1F4F7',
+                    background: fondo,
+                    boxShadow: porVencer ? 'inset 3px 0 0 #F2A541' : undefined,
+                    transition: 'background 0.1s'
+                  }}
+                  onMouseOver={(e) => e.currentTarget.style.background = fondoHover}
+                  onMouseOut={(e) => e.currentTarget.style.background = fondo}
+                >
                   <td style={tdStyle}>
                     <span style={{
                       display: 'inline-block', padding: '4px 12px', borderRadius: 999,
@@ -580,7 +651,7 @@ function Activos() {
                     }}>{eq.marca?.nombre || '—'}</span>
                   </td>
                   <td style={{ ...tdStyle, fontSize: 13, fontWeight: 500 }}>{eq.modelo}</td>
-                  <td style={{ ...tdStyle, fontFamily: 'monospace', fontSize: 12, color: '#6B7C8C' }}>{eq.nroSerie}</td>
+                  <td style={{ ...tdStyle, fontFamily: 'monospace', fontSize: 12, color: '#5C6B7A' }}>{eq.nroSerie}</td>
                   <td style={tdStyle}>
                     <span style={{
                       display: 'inline-block', padding: '4px 12px', borderRadius: 999,
@@ -595,7 +666,7 @@ function Activos() {
                         {vencida && <span style={{ ...chipGarantia, background: '#FAECE7', color: '#712B13' }}>Vencida</span>}
                       </>
                     ) : (
-                      <span style={{ color: '#9E9CBB', fontSize: 13 }}>—</span>
+                      <span style={{ color: '#5C6B7A', fontSize: 13 }}>—</span>
                     )}
                   </td>
                   <td style={tdStyle}>
@@ -603,6 +674,7 @@ function Activos() {
                       <button
                         onClick={() => setModalAlertasEquipo(eq)}
                         title="Ver alertas pendientes"
+                        aria-label={`Ver ${cantAlertas} ${cantAlertas === 1 ? 'alerta pendiente' : 'alertas pendientes'} de ${eq.modelo}`}
                         style={{
                           display: 'inline-flex', alignItems: 'center', gap: 4,
                           background: '#FCE8EF', color: '#7A1B3E',
@@ -614,29 +686,32 @@ function Activos() {
                         onMouseOut={(e) => e.currentTarget.style.background = '#FCE8EF'}
                       >🔔 {cantAlertas}</button>
                     ) : (
-                      <span style={{ color: '#9E9CBB', fontSize: 13 }}>—</span>
+                      <span style={{ color: '#5C6B7A', fontSize: 13 }}>—</span>
                     )}
                   </td>
                   <td style={tdStyle}>
-                    <button className="btn-edit" onClick={() => abrirModalEditar(eq)}>✏</button>
-                    <button className="btn-edit" onClick={() => setModalQrEquipo(eq)} title="Ver / imprimir codigo QR" style={{ marginLeft: 6 }}>QR</button>
+                    <button className="btn-edit" onClick={() => abrirModalEditar(eq)}
+                      title="Editar activo" aria-label={`Editar ${eq.modelo}`}>✏</button>
+                    <button className="btn-edit" onClick={() => setModalQrEquipo(eq)}
+                      title="Ver / imprimir código QR" aria-label={`Ver código QR de ${eq.modelo}`}
+                      style={{ marginLeft: 6 }}>QR</button>
                   </td>
                 </tr>
               );
             })}
             {equiposFiltrados.length === 0 && (
-              <tr><td colSpan="7" style={{ textAlign: 'center', padding: 40, color: '#9E9CBB', fontSize: 13 }}>
-                No hay activos para mostrar.
+              <tr><td colSpan="7" style={{ textAlign: 'center', padding: 40, color: '#5C6B7A', fontSize: 13 }}>
+                {equipos.length === 0 ? 'No hay activos registrados.' : 'No hay activos que coincidan con los filtros.'}
               </td></tr>
             )}
           </tbody>
         </table>
-        <p style={{ fontSize: 12, color: '#9E9CBB', margin: '16px 0 0', textAlign: 'center' }}>
+        <p style={{ fontSize: 12, color: '#5C6B7A', margin: '16px 0 0', textAlign: 'left' }}>
           {equiposFiltrados.length} {equiposFiltrados.length === 1 ? 'activo' : 'activos'}
+          {equiposFiltrados.length !== equipos.length ? ` (de ${equipos.length})` : ''}
         </p>
       </div>
 
-      {}
       {modalAbierto && (
         <div
           onClick={cerrarModal}
@@ -659,7 +734,6 @@ function Activos() {
               animation: 'slideIn 0.25s ease-out'
             }}
           >
-            {}
             <div style={{
               padding: '24px 28px 20px',
               borderBottom: '1px solid #F0F3F7',
@@ -675,9 +749,9 @@ function Activos() {
               </div>
               <div style={{ flex: 1 }}>
                 <h3 style={{ margin: 0, color: '#1a1a1a', fontSize: 18, fontWeight: 700 }}>
-                  {editando ? 'Editar activo médico' : 'Activo médico'}
+                  {editando ? 'Editar activo médico' : 'Nuevo activo médico'}
                 </h3>
-                <p style={{ margin: '4px 0 0', color: '#6B7C8C', fontSize: 13 }}>
+                <p style={{ margin: '4px 0 0', color: '#5C6B7A', fontSize: 13 }}>
                   {editando
                     ? 'Modificá los datos del equipo hospitalario'
                     : 'Completá los datos del equipo para su registro patrimonial'}
@@ -688,17 +762,16 @@ function Activos() {
                 style={{
                   background: '#F4F7FA', border: 'none',
                   width: 32, height: 32, borderRadius: 8,
-                  fontSize: 18, cursor: 'pointer', color: '#6B7C8C',
+                  fontSize: 18, cursor: 'pointer', color: '#5C6B7A',
                   display: 'flex', alignItems: 'center', justifyContent: 'center'
                 }}
                 title="Cerrar (Esc)"
+                aria-label="Cerrar"
               >✕</button>
             </div>
 
-            {}
             <div style={{ padding: '20px 18px 24px' }}>
 
-              {}
               {errores.__general && (
                 <div style={{
                   background: 'linear-gradient(90deg, #FEF2F3 0%, #FDECEE 100%)',
@@ -713,7 +786,6 @@ function Activos() {
                 </div>
               )}
 
-              {}
               <SeccionTitulo icono="📋" titulo="Identificación del equipo" />
               <div className="rwd-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 22 }}>
                 <div>
@@ -739,7 +811,6 @@ function Activos() {
                   {errores.nroSerie && <span style={errStyle}>⚠ {errores.nroSerie}</span>}
                 </div>
 
-                {}
                 <div style={{ position: 'relative' }}>
                   <label style={lblStyle}>Marca *</label>
 
@@ -756,10 +827,10 @@ function Activos() {
                       </div>
                       <button
                         type="button" onClick={limpiarMarca}
-                        title="Cambiar marca"
+                        title="Cambiar marca" aria-label="Cambiar marca"
                         style={{
                           background: 'transparent', border: 'none',
-                          color: '#9E9CBB', fontSize: 16, cursor: 'pointer',
+                          color: '#5C6B7A', fontSize: 16, cursor: 'pointer',
                           padding: '4px 8px', borderRadius: 6
                         }}
                       >✕</button>
@@ -773,7 +844,7 @@ function Activos() {
                         <span style={{
                           position: 'absolute', left: 12, top: '50%',
                           transform: 'translateY(-50%)',
-                          color: '#9E9CBB', fontSize: 14, pointerEvents: 'none'
+                          color: '#5C6B7A', fontSize: 14, pointerEvents: 'none'
                         }}>🔍</span>
                         <input
                           type="text" value={buscadorMarca}
@@ -781,6 +852,7 @@ function Activos() {
                           onFocus={() => setMostrarListaMarca(true)}
                           onBlur={() => setTimeout(() => setMostrarListaMarca(false), 200)}
                           placeholder="Buscar marca..."
+                          aria-label="Buscar marca"
                           style={{
                             width: '100%', padding: '10px 12px 10px 36px',
                             border: 'none', outline: 'none',
@@ -800,7 +872,7 @@ function Activos() {
                           zIndex: 10
                         }}>
                           {marcasFiltradas.length === 0 ? (
-                            <div style={{ padding: '16px', textAlign: 'center', color: '#9E9CBB', fontSize: 12 }}>
+                            <div style={{ padding: '16px', textAlign: 'center', color: '#5C6B7A', fontSize: 12 }}>
                               No se encontraron marcas con "{buscadorMarca}"
                             </div>
                           ) : (
@@ -827,7 +899,6 @@ function Activos() {
                   {errores.idMarca && <span style={errStyle}>⚠ {errores.idMarca}</span>}
                 </div>
 
-                {}
                 <div style={{ position: 'relative' }}>
                   <label style={lblStyle}>Tipo de activo *</label>
 
@@ -844,10 +915,10 @@ function Activos() {
                       </div>
                       <button
                         type="button" onClick={limpiarTipo}
-                        title="Cambiar tipo"
+                        title="Cambiar tipo" aria-label="Cambiar tipo de activo"
                         style={{
                           background: 'transparent', border: 'none',
-                          color: '#9E9CBB', fontSize: 16, cursor: 'pointer',
+                          color: '#5C6B7A', fontSize: 16, cursor: 'pointer',
                           padding: '4px 8px', borderRadius: 6
                         }}
                       >✕</button>
@@ -861,7 +932,7 @@ function Activos() {
                         <span style={{
                           position: 'absolute', left: 12, top: '50%',
                           transform: 'translateY(-50%)',
-                          color: '#9E9CBB', fontSize: 14, pointerEvents: 'none'
+                          color: '#5C6B7A', fontSize: 14, pointerEvents: 'none'
                         }}>🔍</span>
                         <input
                           type="text" value={buscadorTipo}
@@ -869,6 +940,7 @@ function Activos() {
                           onFocus={() => setMostrarListaTipo(true)}
                           onBlur={() => setTimeout(() => setMostrarListaTipo(false), 200)}
                           placeholder="Buscar tipo de activo..."
+                          aria-label="Buscar tipo de activo"
                           style={{
                             width: '100%', padding: '10px 12px 10px 36px',
                             border: 'none', outline: 'none',
@@ -888,7 +960,7 @@ function Activos() {
                           zIndex: 10
                         }}>
                           {tiposFiltrados.length === 0 ? (
-                            <div style={{ padding: '16px', textAlign: 'center', color: '#9E9CBB', fontSize: 12 }}>
+                            <div style={{ padding: '16px', textAlign: 'center', color: '#5C6B7A', fontSize: 12 }}>
                               No se encontraron tipos con "{buscadorTipo}"
                             </div>
                           ) : (
@@ -916,7 +988,6 @@ function Activos() {
                 </div>
               </div>
 
-              {}
               <SeccionTitulo icono="📅" titulo="Fechas de trazabilidad" />
               <div
                 className="rwd-grid"
@@ -931,16 +1002,13 @@ function Activos() {
                   <label style={lblStyle}>Fecha de adquisición *</label>
 
                   <DatePicker
-                    selected={fechaAdq ? new Date(fechaAdq) : null}
+                    selected={ISOAFecha(fechaAdq)}
                     onChange={(date) => {
                       if (date) {
-                        const adquisicion = date.toISOString().split("T")[0];
                         const garantia = new Date(date);
                         garantia.setFullYear(garantia.getFullYear() + 1);
-                        const vencimiento = garantia.toISOString().split("T")[0];
-
-                        cambiarCampo("fechaAdq", adquisicion, setFechaAdq);
-                        cambiarCampo("fechaGar", vencimiento, setFechaGar);
+                        cambiarCampo("fechaAdq", fechaAISO(date), setFechaAdq);
+                        cambiarCampo("fechaGar", fechaAISO(garantia), setFechaGar);
                       } else {
                         cambiarCampo("fechaAdq", "", setFechaAdq);
                         cambiarCampo("fechaGar", "", setFechaGar);
@@ -948,10 +1016,10 @@ function Activos() {
                     }}
                     dateFormat="dd/MM/yyyy"
                     maxDate={hoy}
-                    minDate={inicioAnio}
+                    minDate={minAdquisicion}
                     showYearDropdown
                     scrollableYearDropdown
-                    yearDropdownItemNumber={50}
+                    yearDropdownItemNumber={40}
                     customInput={<CustomDateInput />}
                   />
 
@@ -964,22 +1032,21 @@ function Activos() {
                   <label style={lblStyle}>Vencimiento de garantía</label>
 
                   <DatePicker
-                    selected={fechaGar ? new Date(fechaGar) : null}
+                    selected={ISOAFecha(fechaGar)}
                     onChange={(date) =>
-                      cambiarCampo(
-                        "fechaGar",
-                        date ? date.toISOString().split("T")[0] : "",
-                        setFechaGar
-                      )
+                      cambiarCampo("fechaGar", date ? fechaAISO(date) : "", setFechaGar)
                     }
                     dateFormat="dd/MM/yyyy"
-                    minDate={fechaAdq ? new Date(fechaAdq) : inicioAnio}
-                    maxDate={finAnio}
+                    minDate={fechaAdq ? ISOAFecha(fechaAdq) : minAdquisicion}
+                    maxDate={maxGarantia}
                     showYearDropdown
                     scrollableYearDropdown
-                    yearDropdownItemNumber={1}
-                    customInput={<CustomDateInput placeholder="dd/mm/aaaa" />}
+                    yearDropdownItemNumber={15}
+                    customInput={<CustomDateInput />}
                   />
+                  <small style={{ display: 'block', marginTop: 6, fontSize: 11, color: '#5C6B7A' }}>
+                    Se sugiere 1 año desde la adquisición; podés cambiarla.
+                  </small>
 
                   {errores.fechaGar && (
                     <span style={errStyle}>⚠ {errores.fechaGar}</span>
@@ -987,12 +1054,11 @@ function Activos() {
                 </div>
               </div>
 
-              {}
               <SeccionTitulo icono="🧩" titulo="Componentes del equipo" />
               <div style={{ marginBottom: 22 }}>
                 {!tipoSeleccionado ? (
                   <div style={{
-                    fontSize: 12, color: '#9E9CBB', background: '#FAFBFC',
+                    fontSize: 12, color: '#5C6B7A', background: '#FAFBFC',
                     border: '1px dashed #E5EDF3', borderRadius: 10, padding: '14px 16px'
                   }}>
                     Seleccioná primero el <strong>Tipo de activo</strong> para ver los componentes esperados.
@@ -1008,7 +1074,7 @@ function Activos() {
                 ) : (
                   <>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
-                      <div style={{ fontSize: 11, color: '#9E9CBB' }}>
+                      <div style={{ fontSize: 11, color: '#5C6B7A' }}>
                         {componentesSeleccionados.length} de {componentesDelTipo.items.length} componentes marcados
                       </div>
                       <div style={{ display: 'flex', gap: 8 }}>
@@ -1050,7 +1116,7 @@ function Activos() {
                               <div style={{ fontSize: 13, fontWeight: 500, color: '#1a1a1a' }}>
                                 {item.componente}
                               </div>
-                              <div style={{ fontSize: 11, color: '#9E9CBB', marginTop: 2 }}>
+                              <div style={{ fontSize: 11, color: '#5C6B7A', marginTop: 2 }}>
                                 {item.categoria}
                               </div>
                             </div>
@@ -1069,7 +1135,6 @@ function Activos() {
 
             </div>
 
-            {}
             <div style={{
               padding: '16px 28px',
               borderTop: '1px solid #F0F3F7',
@@ -1079,15 +1144,18 @@ function Activos() {
               display:'flex', justifyContent:'flex-end', gap:10
             }}>
               <button onClick={cerrarModal} style={btnGhost}>Cancelar</button>
-              <button onClick={guardar} style={btnSave}>
-                {editando ? '✓ Actualizar activo' : '✓ Registrar activo'}
+              <button
+                onClick={guardar}
+                disabled={guardando}
+                style={{ ...btnSave, opacity: guardando ? 0.6 : 1, cursor: guardando ? 'not-allowed' : 'pointer' }}
+              >
+                {guardando ? 'Guardando…' : (editando ? '✓ Actualizar activo' : '✓ Registrar activo')}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {}
       {modalAlertasEquipo && (
         <div
           onClick={() => setModalAlertasEquipo(null)}
@@ -1109,15 +1177,15 @@ function Activos() {
           >
             <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16, borderBottom:'1px solid #eee', paddingBottom:12 }}>
               <div>
-                <h3 style={{ margin:0, color:'#FF5E7A' }}>🔔 Alertas pendientes</h3>
-                <div style={{ fontSize:13, color:'#666', marginTop:4 }}>
+                <h3 style={{ margin:0, color:'#8F2D14' }}>🔔 Alertas pendientes</h3>
+                <div style={{ fontSize:13, color:'#5C6B7A', marginTop:4 }}>
                   <strong>{modalAlertasEquipo.modelo}</strong> · S/N {modalAlertasEquipo.nroSerie}
                 </div>
               </div>
               <button
                 onClick={() => setModalAlertasEquipo(null)}
-                style={{ background:'none', border:'none', fontSize:24, cursor:'pointer', color:'#999', lineHeight:1 }}
-                title="Cerrar (Esc)"
+                style={{ background:'none', border:'none', fontSize:24, cursor:'pointer', color:'#5C6B7A', lineHeight:1 }}
+                title="Cerrar (Esc)" aria-label="Cerrar"
               >✕</button>
             </div>
             {(alertasPorEquipo[modalAlertasEquipo.idEquipo] || []).map(a => (
@@ -1134,7 +1202,7 @@ function Activos() {
                     padding:'2px 8px', borderRadius:4, fontSize:10, fontWeight:700
                   }}>{a.estado}</span>
                 </div>
-                <div style={{ color:'#666', fontSize:12, marginTop:6 }}>
+                <div style={{ color:'#5C6B7A', fontSize:12, marginTop:6 }}>
                   📅 {a.fechaGeneracion?.split('T')[0]} · 👤 {a.usuario?.nombre || '—'}
                 </div>
               </div>
@@ -1146,7 +1214,6 @@ function Activos() {
         </div>
       )}
 
-      {}
       {modalQrEquipo && (
         <div
           onClick={() => setModalQrEquipo(null)}
@@ -1169,7 +1236,7 @@ function Activos() {
             <div id="qr-imprimible" style={{ textAlign: 'center' }}>
               <div style={{ marginBottom: 14 }}>
                 <strong style={{ fontSize: 15, color: '#1a1a1a' }}>{modalQrEquipo.modelo}</strong>
-                <div style={{ fontSize: 13, color: '#6B7C8C', marginTop: 2 }}>S/N {modalQrEquipo.nroSerie}</div>
+                <div style={{ fontSize: 13, color: '#5C6B7A', marginTop: 2 }}>S/N {modalQrEquipo.nroSerie}</div>
               </div>
               <img
                 src={imagenQr(urlQrEquipo(modalQrEquipo.idEquipo))}
@@ -1193,7 +1260,6 @@ function Activos() {
         </div>
       )}
 
-      {}
       <style>{`
         @keyframes slideIn {
           from { opacity: 0; transform: translateY(-20px) scale(0.98); }
@@ -1287,7 +1353,7 @@ function Activos() {
         }
 
         .react-datepicker__day--outside-month {
-          color: #C5CBD3;
+          color: #8A94A0;
         }
 
         .react-datepicker__triangle {
@@ -1332,8 +1398,8 @@ const alertaCard = { background: 'white', border: '1px solid #F3E3C7', borderRad
 const chipGarantia = { display: 'inline-block', marginTop: 3, padding: '2px 8px', borderRadius: 999, fontSize: 11, fontWeight: 600 };
 
 const thStyle = {
-  fontSize: 11, fontWeight: 500, color: '#6B7C8C',
-  padding: '12px 8px', borderBottom: '1px solid #F1F4F7',
+  fontSize: 11, fontWeight: 600, color: '#5C6B7A',
+  padding: '12px 8px', borderBottom: '1px solid #E5EDF3',
   textTransform: 'uppercase', letterSpacing: '0.4px'
 };
 const tdStyle = {
@@ -1352,11 +1418,11 @@ const inpStyle = {
   fontFamily: 'inherit'
 };
 const errStyle = {
-  display: 'block', color: '#E85A6D', fontSize: 11,
+  display: 'block', color: '#B93B1B', fontSize: 11,
   marginTop: 6, fontWeight: 500
 };
 const btnGhost = {
-  background:'white', color:'#6B7C8C', border:'1px solid #E5EDF3',
+  background:'white', color:'#5C6B7A', border:'1px solid #E5EDF3',
   padding:'10px 18px', borderRadius:8, fontSize:13, fontWeight:600, cursor:'pointer'
 };
 const btnMiniGhost = {

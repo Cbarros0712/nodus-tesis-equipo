@@ -27,29 +27,41 @@ const errorEscaneo = (archivo) => {
   return null;
 };
 
+// Cierra el modal con Esc (si no se está enviando)
+function useEscape(activo, onEsc) {
+  useEffect(() => {
+    if (!activo) return;
+    const handler = (e) => { if (e.key === 'Escape') onEsc(); };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [activo, onEsc]);
+}
+
 function SelectorEscaneo({ archivo, onChange }) {
   const preview = useMemo(() => (archivo?.type.startsWith('image/') ? URL.createObjectURL(archivo) : null), [archivo]);
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview); }, [preview]);
 
   return (
     <div>
-      <label style={{ ...zonaArchivo, borderColor: archivo ? '#9FD8C3' : '#C8DCEA', background: archivo ? '#F2FBF7' : '#FAFBFC' }}>
+      <label style={{ ...zonaArchivo, borderColor: archivo ? '#0F6E56' : '#8FB4CC', background: archivo ? '#F2FBF7' : '#FAFBFC' }}>
+        {/* Input oculto visualmente pero accesible con teclado (Tab + Enter) */}
         <input
           type="file" accept="image/jpeg,image/png,application/pdf"
+          aria-label="Elegir foto o PDF del remito firmado"
           onChange={e => onChange(e.target.files?.[0] || null)}
-          style={{ display: 'none' }}
+          style={inputOculto}
         />
         {archivo ? (
           <>
-            <span style={{ fontSize: 22 }}>{archivo.type === 'application/pdf' ? '📄' : '🖼'}</span>
-            <span style={{ fontSize: 13, fontWeight: 600, color: '#2D3748', wordBreak: 'break-all' }}>{archivo.name}</span>
-            <span style={{ fontSize: 11, color: '#6B7C8C' }}>{(archivo.size / 1024 / 1024).toFixed(2)} MB · click para cambiarlo</span>
+            <span aria-hidden="true" style={{ fontSize: 22 }}>{archivo.type === 'application/pdf' ? '📄' : '🖼'}</span>
+            <span style={{ fontSize: 13, fontWeight: 600, color: '#2D3748', wordBreak: 'break-all' }}>✓ {archivo.name}</span>
+            <span style={{ fontSize: 11, color: '#5C6B7A' }}>{(archivo.size / 1024 / 1024).toFixed(2)} MB · click para cambiarlo</span>
           </>
         ) : (
           <>
-            <span style={{ fontSize: 22 }}>📎</span>
-            <span style={{ fontSize: 13, fontWeight: 600, color: '#2C7DA0' }}>Elegir foto o PDF del remito firmado</span>
-            <span style={{ fontSize: 11, color: '#6B7C8C' }}>JPG, PNG o PDF · hasta 10 MB</span>
+            <span aria-hidden="true" style={{ fontSize: 22 }}>📎</span>
+            <span style={{ fontSize: 13, fontWeight: 600, color: '#1F6E8F' }}>Elegir foto o PDF del remito firmado</span>
+            <span style={{ fontSize: 11, color: '#5C6B7A' }}>JPG, PNG o PDF · hasta 10 MB</span>
           </>
         )}
       </label>
@@ -61,14 +73,14 @@ function SelectorEscaneo({ archivo, onChange }) {
 function EncabezadoModal({ icono, fondo, titulo, prestamo, onCerrar }) {
   return (
     <div style={modalHeaderStyle}>
-      <div style={{ width: 52, height: 52, borderRadius: 12, background: fondo, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24 }}>{icono}</div>
+      <div aria-hidden="true" style={{ width: 52, height: 52, borderRadius: 12, background: fondo, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24 }}>{icono}</div>
       <div style={{ flex: 1 }}>
         <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: '#1a1a1a' }}>{titulo}</h3>
-        <p style={{ margin: '4px 0 0', color: '#6B7C8C', fontSize: 13 }}>
+        <p style={{ margin: '4px 0 0', color: '#5C6B7A', fontSize: 13 }}>
           {prestamo.equipo?.modelo} · {prestamo.hospital?.nombre}
         </p>
       </div>
-      <button onClick={onCerrar} style={btnCerrarX}>✕</button>
+      <button onClick={onCerrar} style={btnCerrarX} title="Cerrar (Esc)" aria-label="Cerrar">✕</button>
     </div>
   );
 }
@@ -97,19 +109,23 @@ export function ModalSubirFirmado({ prestamo, tipo, onCerrar, onSubido }) {
   const [enviando, setEnviando] = useState(false);
 
   const cerrar = () => { if (!enviando) onCerrar(); };
+  useEscape(true, cerrar);
 
   const subir = async () => {
+    if (enviando) return;
     const e = errorEscaneo(archivo);
     if (e) { setError(e); return; }
 
     const form = new FormData();
     form.append('archivo', archivo);
     setEnviando(true);
+    setError('');
     try {
       await api.post(`/remitos/${prestamo.idPrestamo}/subir-firma-${tipo}`, form);
       onSubido();
     } catch (err) {
       setError(mensajeApi(err, 'No se pudo subir el remito firmado.'));
+    } finally {
       setEnviando(false);
     }
   };
@@ -120,21 +136,24 @@ export function ModalSubirFirmado({ prestamo, tipo, onCerrar, onSubido }) {
         <EncabezadoModal icono="✍" fondo="linear-gradient(135deg, #E6F1FB 0%, #D3E6F5 100%)" titulo={r.titulo} prestamo={prestamo} onCerrar={cerrar} />
 
         <div style={{ padding: '20px 28px 24px' }}>
-          {error && <div style={bannerError}>⚠ {error}</div>}
+          {error && <div role="alert" style={bannerError}>⚠ {error}</div>}
           <p style={{ fontSize: 13, color: '#4A5868', margin: '0 0 12px' }}>
             Subí el remito <b style={{ fontFamily: 'monospace' }}>{r.numero(prestamo)}</b> {r.ayuda}.{' '}
             <a href={r.url(prestamo)} target="_blank" rel="noreferrer" style={lnkDoc}>Ver remito</a>
           </p>
           {r.reemplaza(prestamo) && (
-            <p style={{ fontSize: 12, color: '#8A4B00', margin: '0 0 12px' }}>Ya hay un escaneo cargado: el nuevo lo reemplaza.</p>
+            <p style={{ fontSize: 12, color: '#8A4B00', margin: '0 0 12px' }}>⚠ Ya hay un escaneo cargado: el nuevo lo reemplaza.</p>
           )}
           <SelectorEscaneo archivo={archivo} onChange={(f) => { setArchivo(f); setError(''); }} />
         </div>
 
         <div style={modalFooterStyle}>
           <button onClick={cerrar} disabled={enviando} style={btnGhost}>Cancelar</button>
-          <button onClick={subir} disabled={enviando || !archivo} style={{ ...btnSave, opacity: enviando || !archivo ? 0.5 : 1 }}>
-            {enviando ? 'Subiendo...' : '⬆ Subir firmado'}
+          <button
+            onClick={subir} disabled={enviando || !archivo}
+            style={{ ...btnSave, opacity: enviando || !archivo ? 0.5 : 1, cursor: enviando || !archivo ? 'not-allowed' : 'pointer' }}
+          >
+            {enviando ? 'Subiendo…' : '⬆ Subir firmado'}
           </button>
         </div>
       </div>
@@ -146,21 +165,41 @@ export function ModalDevolucion({ prestamo, onCerrar, onRegistrado }) {
   const [fecha, setFecha] = useState(hoyISO());
   const [obs, setObs] = useState('');
   const [registrado, setRegistrado] = useState(null);
-  const [error, setError] = useState('');
+  const [errores, setErrores] = useState({});
   const [enviando, setEnviando] = useState(false);
 
+  // La devolución no puede ser anterior a la fecha del préstamo
+  const fechaMinima = prestamo.fechaPrestamo ? String(prestamo.fechaPrestamo).split('T')[0] : undefined;
+
   const cerrar = () => { if (!enviando) onCerrar(); };
+  useEscape(true, cerrar);
+
+  const quitarError = (campo) => {
+    if (errores[campo]) setErrores(prev => { const n = { ...prev }; delete n[campo]; return n; });
+  };
+
+  const validar = () => {
+    const errs = {};
+    if (!fecha) errs.fecha = 'Elegí la fecha de devolución.';
+    else if (fecha > hoyISO()) errs.fecha = 'La fecha de devolución no puede ser futura.';
+    else if (fechaMinima && fecha < fechaMinima) errs.fecha = 'No puede ser anterior a la fecha del préstamo.';
+    if (obs.length > 500) errs.obs = 'Las observaciones no pueden superar los 500 caracteres.';
+    return errs;
+  };
 
   const registrar = async () => {
-    if (!fecha) { setError('Elegí la fecha de devolución.'); return; }
+    if (enviando) return;
+    const errs = validar();
+    setErrores(errs);
+    if (Object.keys(errs).length > 0) return;
+
     setEnviando(true);
-    setError('');
     try {
       const r = await api.post(`/prestamos/${prestamo.idPrestamo}/devolucion`, { fechaDevolucion: fecha, observaciones: obs.trim() || null });
       setRegistrado(r.data);
       onRegistrado?.(r.data);
     } catch (err) {
-      setError(mensajeApi(err, 'No se pudo registrar la devolución.'));
+      setErrores({ __general: mensajeApi(err, 'No se pudo registrar la devolución.') });
     } finally {
       setEnviando(false);
     }
@@ -173,26 +212,43 @@ export function ModalDevolucion({ prestamo, onCerrar, onRegistrado }) {
 
         {registrado ? (
           <div style={{ padding: '20px 28px 24px', textAlign: 'center' }}>
-            <div style={{ fontSize: 11, fontWeight: 600, color: '#6B7C8C', letterSpacing: '0.5px' }}>N° DE REMITO DE DEVOLUCIÓN</div>
+            <div style={{ fontSize: 11, fontWeight: 600, color: '#5C6B7A', letterSpacing: '0.5px' }}>N° DE REMITO DE DEVOLUCIÓN</div>
             <div style={{ fontSize: 26, fontWeight: 700, color: '#0F6E56', margin: '4px 0 12px', fontFamily: 'monospace' }}>{registrado.numeroRemitoDevolucion}</div>
-            <p style={{ fontSize: 12, color: '#6B7C8C', margin: 0 }}>
+            <p style={{ fontSize: 12, color: '#5C6B7A', margin: 0 }}>
               Imprimilo para que lo firmen quien entrega y quien recibe el equipo. Después subí el escaneo desde Remitos con "Subir firmado".
             </p>
           </div>
         ) : (
           <div style={{ padding: '20px 28px 24px' }}>
-            {error && <div style={bannerError}>⚠ {error}</div>}
-            <label style={lblStyle}>Fecha de devolución *</label>
-            <input type="date" value={fecha} max={hoyISO()} onChange={e => setFecha(e.target.value)} style={inpStyle} />
-
-            <label style={{ ...lblStyle, marginTop: 12 }}>Estado en que vuelve el equipo</label>
-            <textarea
-              value={obs} onChange={e => setObs(e.target.value)}
-              placeholder="Novedades, faltantes, daños... (se imprime en el remito de devolución)"
-              rows={2}
-              style={{ ...inpStyle, resize: 'vertical', fontFamily: 'inherit' }}
+            {errores.__general && <div role="alert" style={bannerError}>⚠ {errores.__general}</div>}
+            <label htmlFor="dev-fecha" style={lblStyle}>Fecha de devolución *</label>
+            <input
+              id="dev-fecha" type="date" value={fecha} min={fechaMinima} max={hoyISO()}
+              onChange={e => { setFecha(e.target.value); quitarError('fecha'); }}
+              style={{
+                ...inpStyle,
+                border: errores.fecha ? '1.5px solid #B93B1B' : '1.5px solid #E5EDF3',
+                background: errores.fecha ? '#FFF8F9' : '#FAFBFC'
+              }}
             />
-            <p style={{ fontSize: 12, color: '#6B7C8C', margin: '10px 0 0' }}>
+            {errores.fecha && <span style={errStyle}>⚠ {errores.fecha}</span>}
+
+            <label htmlFor="dev-obs" style={{ ...lblStyle, marginTop: 12 }}>Estado en que vuelve el equipo</label>
+            <textarea
+              id="dev-obs"
+              value={obs} onChange={e => { setObs(e.target.value); quitarError('obs'); }}
+              placeholder="Novedades, faltantes, daños... (se imprime en el remito de devolución)"
+              rows={2} maxLength={500}
+              style={{
+                ...inpStyle, resize: 'vertical', fontFamily: 'inherit',
+                border: errores.obs ? '1.5px solid #B93B1B' : '1.5px solid #E5EDF3',
+                background: errores.obs ? '#FFF8F9' : '#FAFBFC'
+              }}
+            />
+            {errores.obs && <span style={errStyle}>⚠ {errores.obs}</span>}
+            <small style={{ display: 'block', marginTop: 4, fontSize: 11, color: '#5C6B7A' }}>{obs.length} / 500 caracteres</small>
+
+            <p style={{ fontSize: 12, color: '#5C6B7A', margin: '10px 0 0' }}>
               El préstamo se cierra, el equipo vuelve a servicio y se genera el remito de devolución.
             </p>
           </div>
@@ -208,8 +264,11 @@ export function ModalDevolucion({ prestamo, onCerrar, onRegistrado }) {
           ) : (
             <>
               <button onClick={cerrar} disabled={enviando} style={btnGhost}>Cancelar</button>
-              <button onClick={registrar} disabled={enviando} style={{ ...btnSave, opacity: enviando ? 0.5 : 1 }}>
-                {enviando ? 'Registrando...' : '✓ Registrar devolución'}
+              <button
+                onClick={registrar} disabled={enviando}
+                style={{ ...btnSave, opacity: enviando ? 0.6 : 1, cursor: enviando ? 'not-allowed' : 'pointer' }}
+              >
+                {enviando ? 'Registrando…' : '✓ Registrar devolución'}
               </button>
             </>
           )}
@@ -221,13 +280,15 @@ export function ModalDevolucion({ prestamo, onCerrar, onRegistrado }) {
 
 const lblStyle = { display: 'block', fontSize: 11, fontWeight: 600, color: '#4A5868', marginBottom: 6 };
 const inpStyle = { width: '100%', padding: '10px 12px', border: '1.5px solid #E5EDF3', borderRadius: 8, fontSize: 13, background: '#FAFBFC', outline: 'none', boxSizing: 'border-box' };
-const btnGhost = { background: 'white', color: '#6B7C8C', border: '1px solid #E5EDF3', padding: '10px 18px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer' };
+const errStyle = { display: 'block', color: '#B93B1B', fontSize: 11, marginTop: 6, fontWeight: 500 };
+const btnGhost = { background: 'white', color: '#5C6B7A', border: '1px solid #E5EDF3', padding: '10px 18px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer' };
 const btnSave = { background: 'linear-gradient(135deg, #2C7DA0 0%, #4A9BB8 100%)', color: 'white', border: 'none', padding: '10px 20px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer' };
-const btnCerrarX = { background: '#F4F7FA', border: 'none', width: 32, height: 32, borderRadius: 8, fontSize: 18, cursor: 'pointer', color: '#6B7C8C' };
+const btnCerrarX = { background: '#F4F7FA', border: 'none', width: 32, height: 32, borderRadius: 8, fontSize: 18, cursor: 'pointer', color: '#5C6B7A' };
 const overlayStyle = { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(20,25,40,0.6)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 20 };
 const modalStyle = { background: 'white', borderRadius: 16, width: '100%', maxHeight: '92vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' };
 const modalHeaderStyle = { padding: '24px 28px 20px', borderBottom: '1px solid #F0F3F7', display: 'flex', alignItems: 'center', gap: 16 };
 const modalFooterStyle = { padding: '16px 28px', borderTop: '1px solid #F0F3F7', background: '#FAFBFC', borderBottomLeftRadius: 16, borderBottomRightRadius: 16, display: 'flex', justifyContent: 'flex-end', gap: 10 };
 const bannerError = { background: '#FDECEE', border: '1px solid #F5C2C7', color: '#842029', padding: '12px 14px', borderRadius: 10, fontSize: 13, marginBottom: 16 };
-const zonaArchivo = { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, padding: '18px 14px', border: '1.5px dashed', borderRadius: 10, cursor: 'pointer', textAlign: 'center' };
-const lnkDoc = { color: '#2C7DA0', fontSize: 12, fontWeight: 600, textDecoration: 'none' };
+const zonaArchivo = { position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, padding: '18px 14px', border: '1.5px dashed', borderRadius: 10, cursor: 'pointer', textAlign: 'center' };
+const inputOculto = { position: 'absolute', width: 1, height: 1, opacity: 0, overflow: 'hidden', pointerEvents: 'none' };
+const lnkDoc = { color: '#1F6E8F', fontSize: 12, fontWeight: 600, textDecoration: 'none' };

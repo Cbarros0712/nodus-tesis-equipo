@@ -20,6 +20,19 @@ namespace NODUS.API.Controllers
         private const int ID_ESTADO_EN_SERVICIO = 1;
         private const int ID_ESTADO_EN_PRESTAMO = 4;
 
+        private const int MAX_OBSERVACIONES = 500;
+        private const int MAX_COMPONENTE = 150;
+        private const int MAX_COMPONENTES = 50;
+
+        private static readonly string[] MotivosPermitidos =
+        {
+            "Emergencia sanitaria",
+            "Colaboración interinstitucional",
+            "Falta de equipo propio",
+            "Prueba / evaluación técnica",
+            "Otro"
+        };
+
         public PrestamosController(NodusDbContext db, RemitoService remitos, AlmacenamientoService almacenamiento, ILogger<PrestamosController> logger)
         {
             _db = db;
@@ -159,6 +172,31 @@ namespace NODUS.API.Controllers
         [HttpPost]
         public async Task<ActionResult<PrestamoDto>> PostPrestamo(PrestamoInputDto input)
         {
+            // Validaciones que no requieren base de datos
+            var motivo = input.Motivo?.Trim();
+            if (string.IsNullOrEmpty(motivo)) return BadRequest("Indicá el motivo del préstamo.");
+            if (!MotivosPermitidos.Contains(motivo)) return BadRequest("El motivo indicado no es válido.");
+
+            var observaciones = string.IsNullOrWhiteSpace(input.Observaciones) ? null : input.Observaciones.Trim();
+            if (observaciones != null && observaciones.Length > MAX_OBSERVACIONES)
+                return BadRequest($"Las observaciones no pueden superar los {MAX_OBSERVACIONES} caracteres.");
+
+            if (input.FechaPrestamo.Date > ZonaHoraria.AhoraArgentina().Date)
+                return BadRequest("La fecha de préstamo no puede ser futura.");
+
+            var componentes = (input.Componentes ?? new List<string>())
+                .Select(c => c?.Trim() ?? string.Empty)
+                .Where(c => c.Length > 0)
+                .Distinct()
+                .ToList();
+            if (componentes.Count > MAX_COMPONENTES)
+                return BadRequest($"No se pueden prestar más de {MAX_COMPONENTES} componentes en un mismo préstamo.");
+            if (componentes.Any(c => c.Length > MAX_COMPONENTE))
+                return BadRequest($"El nombre de un componente no puede superar los {MAX_COMPONENTE} caracteres.");
+
+            if (!await _db.Usuarios.AnyAsync(u => u.IdUsuario == input.IdUsuario))
+                return BadRequest("El usuario que registra el préstamo no existe.");
+
             var equipo = await _db.Equipos.FindAsync(input.IdEquipo);
             if (equipo == null) return BadRequest("El equipo indicado no existe.");
 
@@ -189,10 +227,10 @@ namespace NODUS.API.Controllers
                 FechaEstimadaDevolucionOriginal = input.FechaEstimadaDevolucion.HasValue
                     ? DateTime.SpecifyKind(input.FechaEstimadaDevolucion.Value, DateTimeKind.Utc)
                     : null,
-                Observaciones = input.Observaciones,
-                Motivo = input.Motivo,
+                Observaciones = observaciones,
+                Motivo = motivo,
                 Estado = "En préstamo",
-                PrestamoComponentes = (input.Componentes ?? new List<string>())
+                PrestamoComponentes = componentes
                     .Select(nombre => new PrestamoComponente { Componente = nombre })
                     .ToList()
             };
@@ -244,6 +282,9 @@ namespace NODUS.API.Controllers
 
             if (prestamo.Estado == "Devuelto")
                 return BadRequest("Este préstamo ya fue registrado como devuelto.");
+
+            if (!string.IsNullOrWhiteSpace(input.Observaciones) && input.Observaciones.Trim().Length > MAX_OBSERVACIONES)
+                return BadRequest($"Las observaciones no pueden superar los {MAX_OBSERVACIONES} caracteres.");
 
             var fecha = DateTime.SpecifyKind(input.FechaDevolucion.Date, DateTimeKind.Utc);
             if (fecha.Date < prestamo.FechaPrestamo.Date)

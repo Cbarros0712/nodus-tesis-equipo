@@ -47,33 +47,33 @@ function InicioQR({ onLogout }) {
       <div style={{ textAlign: 'center', padding: '28px 4px 24px' }}>
         <div style={{
           width: 72, height: 72, borderRadius: 20, margin: '0 auto 16px',
-          background: 'linear-gradient(135deg, #EEF3FB 0%, #DCE7F5 100%)', color: '#2C7DA0',
+          background: 'linear-gradient(135deg, #EEF3FB 0%, #DCE7F5 100%)', color: '#1F6E8F',
           display: 'flex', alignItems: 'center', justifyContent: 'center'
         }}>
-          <IconQrcode size={38} stroke={1.6} />
+          <IconQrcode size={38} stroke={1.6} aria-hidden="true" />
         </div>
-        <div style={{ fontSize: 18, fontWeight: 700, color: '#1a1a1a', marginBottom: 8 }}>Escaneá el código QR del equipo</div>
-        <div style={{ fontSize: 14, color: '#6B7C8C', lineHeight: 1.5 }}>
+        <h1 style={{ fontSize: 18, fontWeight: 700, color: '#1a1a1a', margin: '0 0 8px' }}>Escaneá el código QR del equipo</h1>
+        <div style={{ fontSize: 14, color: '#5C6B7A', lineHeight: 1.5 }}>
           Con el código QR pegado en el equipo vas a ver su ficha y vas a poder reportar una falla.
         </div>
       </div>
 
       <button type="button" onClick={() => setEscaneando(true)} style={btnEscanear}>
-        <IconQrcode size={24} stroke={2} />
+        <IconQrcode size={24} stroke={2} aria-hidden="true" />
         Escanear QR del equipo
       </button>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '24px 0 16px', color: '#9E9CBB', fontSize: 12 }}>
-        <div style={{ flex: 1, height: 1, background: '#E5EDF3' }} />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '24px 0 16px', color: '#5C6B7A', fontSize: 12 }}>
+        <div style={{ flex: 1, height: 1, background: '#C5CFD8' }} />
         ¿No podés escanear?
-        <div style={{ flex: 1, height: 1, background: '#E5EDF3' }} />
+        <div style={{ flex: 1, height: 1, background: '#C5CFD8' }} />
       </div>
 
       <form onSubmit={buscar} style={cardStyle} noValidate>
         <label htmlFor="codigo-equipo" style={{ display: 'block', fontSize: 13, fontWeight: 700, color: '#1a1a1a', marginBottom: 4 }}>
           Buscar por número de serie o ID
         </label>
-        <div style={{ fontSize: 12.5, color: '#9E9CBB', marginBottom: 10 }}>
+        <div id="codigo-ayuda" style={{ fontSize: 12.5, color: '#5C6B7A', marginBottom: 10 }}>
           Lo encontrás en la etiqueta del equipo, debajo del código QR.
         </div>
         <input
@@ -87,13 +87,14 @@ function InicioQR({ onLogout }) {
           spellCheck={false}
           enterKeyHint="search"
           aria-invalid={!!errorBusqueda}
+          aria-describedby="codigo-ayuda"
           style={inputStyle(!!errorBusqueda)}
         />
         {errorBusqueda && (
-          <div role="alert" style={{ fontSize: 12.5, color: '#A32D2D', marginTop: 6 }}>⚠ {errorBusqueda}</div>
+          <div role="alert" style={{ fontSize: 12.5, color: '#A32D2D', marginTop: 6 }}><span aria-hidden="true">⚠</span> {errorBusqueda}</div>
         )}
         <button type="submit" disabled={buscando} style={{ ...btnSave, marginTop: 12, opacity: buscando ? 0.7 : 1 }}>
-          <IconSearch size={18} stroke={2} />
+          <IconSearch size={18} stroke={2} aria-hidden="true" />
           {buscando ? 'Buscando...' : 'Buscar equipo'}
         </button>
       </form>
@@ -111,15 +112,15 @@ const cardStyle = {
 
 const inputStyle = (error) => ({
   width: '100%', boxSizing: 'border-box', padding: '12px 12px', borderRadius: 10, fontSize: 16,
-  border: `1px solid ${error ? '#E8A5A5' : '#E5EDF3'}`, background: 'white', color: '#1a1a1a',
+  border: `1px solid ${error ? '#B93B1B' : '#8493A2'}`, background: 'white', color: '#1a1a1a',
   fontFamily: 'inherit', outline: 'none'
 });
 const btnGhost = {
-  background: 'white', color: '#6B7C8C', border: '1px solid #E5EDF3',
+  background: 'white', color: '#5C6B7A', border: '1px solid #8493A2',
   padding: '12px 18px', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer', width: '100%'
 };
 const btnSave = {
-  background: 'linear-gradient(135deg, #2C7DA0 0%, #4A9BB8 100%)',
+  background: 'linear-gradient(135deg, #1B6585 0%, #1F6E8F 100%)',
   color: 'white', border: 'none', padding: '12px 18px', borderRadius: 10,
   fontSize: 14, fontWeight: 600, cursor: 'pointer', width: '100%',
   display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8
@@ -127,7 +128,7 @@ const btnSave = {
 const btnEscanear = {
   ...btnSave,
   minHeight: 64, fontSize: 17, fontWeight: 700, borderRadius: 14, gap: 10,
-  boxShadow: '0 6px 18px rgba(44, 125, 160, 0.28)'
+  boxShadow: '0 6px 18px rgba(27, 101, 133, 0.28)'
 };
 
 export default InicioQR;

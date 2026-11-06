@@ -1,35 +1,34 @@
-namespace NODUS.API.Services
+public static class Roles
 {
-    public static class Roles
+    public const string PersonalAsistencial = "Personal asistencial";
+    public const string Tecnico = "Técnico";
+    public const string Bioingeniero = "Bioingeniero";
+
+    public static readonly string[] Todos =
     {
-        public const string Administrador = "Administrador";
-        public const string JefePatrimonio = "Jefe patrimonio";
-        public const string TecnicoBiomedico = "Técnico biomédico";
-        public const string Medico = "Médico";
-        public const string Residente = "Residente";
-        public const string Enfermero = "Enfermero";
-        public const string JefeServicio = "Jefe servicio";
-        public const string AuditorAnmat = "Auditor ANMAT";
-
-        public const string PersonalAsistencial = "Personal asistencial";
-
-        public static readonly string[] Todos =
-        {
-            Administrador, JefePatrimonio, TecnicoBiomedico, Medico, Residente,
-            Enfermero, JefeServicio, AuditorAnmat, PersonalAsistencial
+            PersonalAsistencial, Tecnico, Bioingeniero
         };
 
-        public const string GestionReportesFalla = Administrador + "," + JefePatrimonio + "," + JefeServicio;
-    }
+    public const string Administrador = Bioingeniero;
+    public const string JefePatrimonio = Bioingeniero;
+    public const string JefeServicio = Bioingeniero;
+    public const string AuditorAnmat = Bioingeniero;
+    public const string TecnicoBiomedico = Tecnico;
+    public const string Medico = PersonalAsistencial;
+    public const string Residente = PersonalAsistencial;
+    public const string Enfermero = PersonalAsistencial;
 
-    public static class Politicas
-    {
-        public const string UsuarioInterno = "UsuarioInterno";
-        public const string CualquierUsuario = "CualquierUsuario";
-    }
-
-    public static class LimitesTasa
-    {
-        public const string ReportesFalla = "ReportesFalla";
-    }
+    public const string GestionReportesFalla = Bioingeniero;
 }
+
+public static class Politicas
+{
+    public const string UsuarioInterno = "UsuarioInterno";
+    public const string CualquierUsuario = "CualquierUsuario";
+}
+
+public static class LimitesTasa
+{
+    public const string ReportesFalla = "ReportesFalla";
+}
+

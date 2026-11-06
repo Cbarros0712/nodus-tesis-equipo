@@ -26,14 +26,40 @@ namespace NODUS.API.Controllers
         }
 
         [HttpPost]
-        public async Task<ActionResult<HojaDeVida>> PostHoja(HojaDeVida hoja)
+        public async Task<ActionResult<HojaDeVida>> PostHoja(HojaDeVida entrada)
         {
-            var yaExiste = await _db.HojasDeVida.AnyAsync(h => h.IdEquipo == hoja.IdEquipo);
-            if (yaExiste) return BadRequest("Este equipo ya tiene una hoja de vida.");
+            if (entrada.IdEquipo <= 0)
+                return BadRequest("Seleccioná un equipo.");
 
-            hoja.FechaApertura = DateTime.SpecifyKind(hoja.FechaApertura, DateTimeKind.Utc);
+            var equipo = await _db.Equipos.FindAsync(entrada.IdEquipo);
+            if (equipo == null)
+                return BadRequest("El equipo seleccionado no existe.");
+
+            if (await _db.HojasDeVida.AnyAsync(h => h.IdEquipo == entrada.IdEquipo))
+                return BadRequest("Este equipo ya tiene una hoja de vida.");
+
+            // Sin fecha informada: se usa la de adquisición del equipo o, si no hay, la actual.
+            var fecha = entrada.FechaApertura != default
+                ? entrada.FechaApertura
+                : (equipo.FechaAdquisicion != default ? equipo.FechaAdquisicion : DateTime.UtcNow);
+
+            // Límite = fecha UTC de hoy (>= fecha local argentina) para tolerar el desfase del navegador.
+            if (fecha.Date > DateTime.UtcNow.Date)
+                return BadRequest("La fecha de apertura no puede ser futura.");
+
+            // Solo se copian los campos conocidos (evita overposting del Equipo anidado).
+            var hoja = new HojaDeVida
+            {
+                IdEquipo = entrada.IdEquipo,
+                FechaApertura = DateTime.SpecifyKind(fecha, DateTimeKind.Utc)
+            };
+
             _db.HojasDeVida.Add(hoja);
-            await _db.SaveChangesAsync();
+            try { await _db.SaveChangesAsync(); }
+            catch (DbUpdateException)
+            {
+                return BadRequest("No se pudo crear la hoja de vida. Puede que el equipo ya tenga una.");
+            }
             return Ok(hoja);
         }
 
@@ -42,8 +68,13 @@ namespace NODUS.API.Controllers
         {
             var hoja = await _db.HojasDeVida.FindAsync(id);
             if (hoja == null) return NotFound();
+
             _db.HojasDeVida.Remove(hoja);
-            await _db.SaveChangesAsync();
+            try { await _db.SaveChangesAsync(); }
+            catch (DbUpdateException)
+            {
+                return BadRequest("No se puede eliminar la hoja de vida porque tiene registros asociados.");
+            }
             return NoContent();
         }
 
@@ -58,7 +89,8 @@ namespace NODUS.API.Controllers
             int creadas = 0;
             foreach (var eq in equiposSinHoja)
             {
-                var fechaApertura = eq.FechaAdquisicion != default
+                // Una fecha de adquisición futura (dato mal cargado) no es válida como apertura.
+                var fechaApertura = eq.FechaAdquisicion != default && eq.FechaAdquisicion.Date <= ahora.Date
                     ? DateTime.SpecifyKind(eq.FechaAdquisicion, DateTimeKind.Utc)
                     : ahora;
 
@@ -69,7 +101,12 @@ namespace NODUS.API.Controllers
                 });
                 creadas++;
             }
-            await _db.SaveChangesAsync();
+
+            try { await _db.SaveChangesAsync(); }
+            catch (DbUpdateException)
+            {
+                return BadRequest("No se pudieron generar las hojas de vida. Intentá de nuevo.");
+            }
             return Ok(new { creadas, mensaje = $"Se generaron {creadas} hoja(s) de vida automáticamente." });
         }
 
@@ -119,7 +156,7 @@ namespace NODUS.API.Controllers
             var totalIntervenciones = ots.Sum(o => o.Intervenciones.Count);
             var totalMinutosIntervencion = ots.SelectMany(o => o.Intervenciones).Sum(i => i.TiempoEmpleado);
             var antiguedadAnios = equipo.FechaAdquisicion != default
-                ? (int)Math.Floor((DateTime.UtcNow - equipo.FechaAdquisicion).TotalDays / 365.25)
+                ? Math.Max(0, (int)Math.Floor((DateTime.UtcNow - equipo.FechaAdquisicion).TotalDays / 365.25))
                 : 0;
             var garantiaVigente = equipo.VencimientoGarantia.HasValue && equipo.VencimientoGarantia.Value > DateTime.UtcNow;
 

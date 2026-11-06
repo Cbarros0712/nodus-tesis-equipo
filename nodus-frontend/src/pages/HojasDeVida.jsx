@@ -1,33 +1,96 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import api from '../api';
 import { useToast, mensajeDeError } from '../components/Toast';
+import { puedeHacer } from '../permisos';
 
-function HojasDeVida() {
+const PALETA_PASTEL = [
+  { bg: '#E6F1FB', fg: '#0C447C' },
+  { bg: '#EEEDFE', fg: '#3C3489' },
+  { bg: '#E1F5EE', fg: '#0F6E56' },
+  { bg: '#FAECE7', fg: '#712B13' },
+  { bg: '#FAEEDA', fg: '#633806' },
+  { bg: '#F4E6F6', fg: '#5C1864' },
+  { bg: '#E6F3F7', fg: '#0F4D5C' },
+  { bg: '#F1EFE8', fg: '#444441' },
+  { bg: '#FCE8EF', fg: '#7A1B3E' },
+  { bg: '#E8F3E8', fg: '#2A5A2D' },
+];
+
+const hashTexto = (nombre) => {
+  let hash = 0;
+  for (let i = 0; i < nombre.length; i++) {
+    hash = nombre.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return Math.abs(hash);
+};
+const colorMarca = (nombre) => (nombre ? PALETA_PASTEL[hashTexto(nombre) % PALETA_PASTEL.length] : PALETA_PASTEL[0]);
+const colorTipo = (nombre) => (nombre ? PALETA_PASTEL[(hashTexto(nombre) + 7) % PALETA_PASTEL.length] : PALETA_PASTEL[0]);
+
+const normalizar = (s) => String(s ?? '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+
+// Fechas "solo día" (sin hora o a medianoche) se muestran tal cual, sin correrse un día por la zona horaria.
+// Los instantes con hora real se pasan a hora local.
+const fmtFecha = (f) => {
+  if (!f) return '—';
+  const texto = String(f);
+  const soloDia = /^(\d{4})-(\d{2})-(\d{2})(?:T00:00:00(?:\.0+)?Z?)?$/.exec(texto);
+  const opciones = { day: '2-digit', month: 'short', year: 'numeric' };
+  if (soloDia) {
+    return new Date(Number(soloDia[1]), Number(soloDia[2]) - 1, Number(soloDia[3])).toLocaleDateString('es-AR', opciones);
+  }
+  const d = new Date(f);
+  return isNaN(d) ? '—' : d.toLocaleDateString('es-AR', opciones);
+};
+
+const fmtTiempo = (min) => {
+  if (!min) return '0 min';
+  const h = Math.floor(min / 60), m = min % 60;
+  if (h === 0) return `${m} min`;
+  if (m === 0) return `${h}h`;
+  return `${h}h ${m}min`;
+};
+
+const alActivar = (fn) => (e) => {
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fn(); }
+};
+
+function HojasDeVida({ auth }) {
   const toast = useToast();
+  // La apertura masiva escribe datos: solo para quien puede editar activos (Bioingeniero)
+  const puedeAbrirMasivo = puedeHacer(auth?.usuario?.rol, 'editar_activo');
+
   const [hojas, setHojas] = useState([]);
+  const [cargandoHojas, setCargandoHojas] = useState(true);
   const [historia, setHistoria] = useState(null);
   const [equipoSeleccionadoId, setEquipoSeleccionadoId] = useState(null);
   const [cargandoHistoria, setCargandoHistoria] = useState(false);
   const [busqueda, setBusqueda] = useState('');
   const [gruposExpandidos, setGruposExpandidos] = useState({});
   const [modalMasivo, setModalMasivo] = useState(false);
+  const [generando, setGenerando] = useState(false);
+  const peticionActual = useRef(0);
 
   useEffect(() => { cargarHojas(); }, []);
 
   const cargarHojas = async () => {
-    const r = await api.get('/hojasdevida');
-    setHojas(r.data);
+    setCargandoHojas(true);
+    try {
+      const r = await api.get('/hojasdevida');
+      setHojas(r.data);
+    } catch (err) {
+      toast.error('No se pudieron cargar las hojas de vida', mensajeDeError(err, 'Revisá la conexión e intentá de nuevo.'));
+    } finally {
+      setCargandoHojas(false);
+    }
   };
 
   const gruposPorTipo = useMemo(() => {
     let lista = hojas;
-    if (busqueda.trim()) {
-      const q = busqueda.toLowerCase();
+    const q = normalizar(busqueda.trim());
+    if (q) {
       lista = hojas.filter(h =>
-        h.equipo?.modelo?.toLowerCase().includes(q) ||
-        h.equipo?.marca?.nombre?.toLowerCase().includes(q) ||
-        h.equipo?.nroSerie?.toLowerCase().includes(q) ||
-        h.equipo?.tipoActivo?.nombre?.toLowerCase().includes(q)
+        [h.equipo?.modelo, h.equipo?.marca?.nombre, h.equipo?.nroSerie, h.equipo?.tipoActivo?.nombre]
+          .some(c => normalizar(c).includes(q))
       );
     }
 
@@ -41,23 +104,35 @@ function HojasDeVida() {
     return Object.entries(map).sort((a, b) => a[0].localeCompare(b[0]));
   }, [hojas, busqueda]);
 
-  useEffect(() => {
-    if (gruposPorTipo.length > 0 && Object.keys(gruposExpandidos).length === 0) {
-      const initial = {};
-      gruposPorTipo.forEach(([tipo]) => { initial[tipo] = true; });
-      setGruposExpandidos(initial);
+  const totalVisibles = useMemo(() => gruposPorTipo.reduce((n, [, l]) => n + l.length, 0), [gruposPorTipo]);
 
-      if (!equipoSeleccionadoId && gruposPorTipo[0][1].length > 0) {
-        verHistoria(gruposPorTipo[0][1][0].idEquipo);
-      }
+  // Al entrar, se abre la hoja del primer equipo
+  useEffect(() => {
+    if (!equipoSeleccionadoId && gruposPorTipo.length > 0 && gruposPorTipo[0][1].length > 0) {
+      verHistoria(gruposPorTipo[0][1][0].idEquipo);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gruposPorTipo]);
 
+  // Mientras se busca, todos los grupos se muestran abiertos para ver los resultados
+  const estaExpandido = (tipo) => (busqueda.trim() ? true : (gruposExpandidos[tipo] ?? true));
   const toggleGrupo = (tipo) => {
-    setGruposExpandidos(prev => ({ ...prev, [tipo]: !prev[tipo] }));
+    setGruposExpandidos(prev => ({ ...prev, [tipo]: !(prev[tipo] ?? true) }));
   };
 
+  const cerrarModalMasivo = () => { if (!generando) setModalMasivo(false); };
+
+  useEffect(() => {
+    if (!modalMasivo) return;
+    const handler = (e) => { if (e.key === 'Escape') cerrarModalMasivo(); };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modalMasivo, generando]);
+
   const generarParaTodos = async () => {
+    if (generando) return;
+    setGenerando(true);
     try {
       const r = await api.post('/hojasdevida/generar-para-todos');
       toast.success('Hojas de vida generadas', r.data.mensaje || 'Hojas de vida generadas correctamente.');
@@ -65,57 +140,32 @@ function HojasDeVida() {
       cargarHojas();
     } catch (err) {
       toast.error('No se pudo generar', mensajeDeError(err, 'Error al generar las hojas de vida.'));
+    } finally {
+      setGenerando(false);
     }
   };
 
+  // Si se hacen clic en dos equipos seguidos, solo vale la respuesta del último
   const verHistoria = async (idEquipo) => {
+    const numero = ++peticionActual.current;
     setCargandoHistoria(true);
     setEquipoSeleccionadoId(idEquipo);
     try {
       const r = await api.get(`/hojasdevida/equipo/${idEquipo}/historia`);
+      if (numero !== peticionActual.current) return;
       setHistoria(r.data);
     } catch (err) {
+      if (numero !== peticionActual.current) return;
       toast.error('No se pudo cargar', mensajeDeError(err, 'Error al cargar la historia del equipo.'));
       setHistoria(null);
     } finally {
-      setCargandoHistoria(false);
+      if (numero === peticionActual.current) setCargandoHistoria(false);
     }
-  };
-
-  const PALETA_PASTEL = [
-    { bg: '#E6F1FB', fg: '#0C447C' },
-    { bg: '#EEEDFE', fg: '#3C3489' },
-    { bg: '#E1F5EE', fg: '#0F6E56' },
-    { bg: '#FAECE7', fg: '#712B13' },
-    { bg: '#FAEEDA', fg: '#633806' },
-    { bg: '#F4E6F6', fg: '#5C1864' },
-    { bg: '#E6F3F7', fg: '#0F4D5C' },
-    { bg: '#F1EFE8', fg: '#444441' },
-    { bg: '#FCE8EF', fg: '#7A1B3E' },
-    { bg: '#E8F3E8', fg: '#2A5A2D' },
-  ];
-  const colorMarca = (nombre) => {
-    if (!nombre) return PALETA_PASTEL[0];
-    let hash = 0;
-    for (let i = 0; i < nombre.length; i++) {
-      hash = nombre.charCodeAt(i) + ((hash << 5) - hash);
-    }
-    return PALETA_PASTEL[Math.abs(hash) % PALETA_PASTEL.length];
-  };
-
-  const colorTipo = (nombre) => {
-    if (!nombre) return PALETA_PASTEL[0];
-    let hash = 0;
-    for (let i = 0; i < nombre.length; i++) {
-      hash = nombre.charCodeAt(i) + ((hash << 5) - hash);
-    }
-    return PALETA_PASTEL[Math.abs(hash + 7) % PALETA_PASTEL.length];
   };
 
   return (
     <>
-      {}
-      <div className="rwd-page-header" style={{ padding: '20px 24px 0', background: 'white' }}>
+      <div className="rwd-page-header no-print" style={{ padding: '20px 24px 0', background: 'white' }}>
         <div style={{
           display: 'flex', justifyContent: 'space-between', alignItems: 'center',
           marginBottom: 18, flexWrap: 'wrap', gap: 12
@@ -128,102 +178,114 @@ function HojasDeVida() {
 
             <span style={{
               background: 'rgba(124, 110, 250, 0.12)',
-              color: '#5e51d6',
+              color: '#4B3FBF',
               border: '1px solid rgba(124, 110, 250, 0.25)',
               padding: '4px 12px', borderRadius: 8,
               fontSize: 12, fontWeight: 600, letterSpacing: '0.5px'
             }}>HOJAS DE VIDA</span>
 
-            <p style={{ fontSize: 13, color: '#6B7C8C', margin: 0, marginLeft: 8 }}>
+            <p style={{ fontSize: 13, color: '#5C6B7A', margin: 0, marginLeft: 8 }}>
               Documento patrimonial del ciclo de vida de cada equipo
             </p>
           </div>
 
-          <button
-            onClick={() => setModalMasivo(true)}
-            style={{
-              background: '#F0F6FA', color: '#4A5868', border: 'none',
-              borderRadius: 6, padding: '10px 16px', fontSize: 11,
-              fontWeight: 500, letterSpacing: '0.06em', textTransform: 'uppercase',
-              cursor: 'pointer', transition: 'background 0.15s, color 0.15s'
-            }}
-            onMouseOver={(e) => { e.currentTarget.style.background = '#E0EBF3'; e.currentTarget.style.color = '#2C7DA0'; }}
-            onMouseOut={(e) => { e.currentTarget.style.background = '#F0F6FA'; e.currentTarget.style.color = '#4A5868'; }}
-          >📋 APERTURA MASIVA</button>
+          {puedeAbrirMasivo && (
+            <button
+              onClick={() => setModalMasivo(true)}
+              style={{
+                background: '#F0F6FA', color: '#4A5868', border: 'none',
+                borderRadius: 6, padding: '10px 16px', fontSize: 11,
+                fontWeight: 500, letterSpacing: '0.06em', textTransform: 'uppercase',
+                cursor: 'pointer', transition: 'background 0.15s, color 0.15s'
+              }}
+              onMouseOver={(e) => { e.currentTarget.style.background = '#E0EBF3'; e.currentTarget.style.color = '#1F6E8F'; }}
+              onMouseOut={(e) => { e.currentTarget.style.background = '#F0F6FA'; e.currentTarget.style.color = '#4A5868'; }}
+            ><span aria-hidden="true">📋 </span>APERTURA MASIVA</button>
+          )}
         </div>
       </div>
 
-      {}
-      <div className="rwd-grid" style={{
+      <div className="rwd-grid hv-grid" style={{
         display: 'grid', gridTemplateColumns: '340px 1fr',
         gap: 0, background: 'white',
         minHeight: 600, borderTop: '1px solid #E5EDF3'
       }}>
 
-        {}
-        <div style={{
+        <div className="hv-lista no-print" style={{
           borderRight: '1px solid #E5EDF3', padding: '16px',
           maxHeight: 'calc(100vh - 180px)', overflowY: 'auto'
         }}>
-          {}
           <div style={{
             fontSize: 15, fontWeight: 700, color: '#1a1a1a',
             marginBottom: 14, display: 'flex', alignItems: 'center', gap: 8
           }}>
-            <span>📋</span>
+            <span aria-hidden="true">📋</span>
             <span>Hoja de vida</span>
-            <span style={{
-              marginLeft: 'auto',
-              background: '#1a1a1a', color: 'white',
-              borderRadius: 6, padding: '2px 8px',
-              fontSize: 11, fontWeight: 600
-            }}>{hojas.length}</span>
+            <span
+              title={busqueda.trim() ? `${totalVisibles} de ${hojas.length} equipos` : `${hojas.length} equipos`}
+              style={{
+                marginLeft: 'auto',
+                background: '#1a1a1a', color: 'white',
+                borderRadius: 6, padding: '2px 8px',
+                fontSize: 11, fontWeight: 600
+              }}>{busqueda.trim() ? `${totalVisibles} de ${hojas.length}` : hojas.length}</span>
           </div>
 
-          {}
           <div style={{
             background: '#F4F7FA', borderRadius: 8, padding: '8px 12px',
             display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14
           }}>
-            <span style={{ color: '#9E9CBB', fontSize: 14 }}>🔍</span>
+            <span aria-hidden="true" style={{ color: '#5C6B7A', fontSize: 14 }}>🔍</span>
             <input
               type="text" placeholder="Buscar equipo" value={busqueda}
+              aria-label="Buscar equipo por modelo, marca, serie o tipo"
               onChange={e => setBusqueda(e.target.value)}
               style={{
                 background: 'transparent', border: 'none', outline: 'none',
-                flex: 1, fontSize: 13, color: '#4A5868'
+                flex: 1, fontSize: 13, color: '#2D3748'
               }}
             />
+            {busqueda && (
+              <button
+                type="button" onClick={() => setBusqueda('')}
+                title="Limpiar búsqueda" aria-label="Limpiar búsqueda"
+                style={{ background: 'transparent', border: 'none', color: '#5C6B7A', fontSize: 16, cursor: 'pointer', padding: '0 4px' }}
+              >×</button>
+            )}
           </div>
 
           {gruposPorTipo.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: 30, color: '#9E9CBB', fontSize: 13 }}>
-              {hojas.length === 0
-                ? 'No hay hojas de vida.'
-                : 'Sin resultados para la búsqueda.'}
+            <div style={{ textAlign: 'center', padding: 30, color: '#5C6B7A', fontSize: 13, lineHeight: 1.5 }}>
+              {cargandoHojas
+                ? 'Cargando hojas de vida…'
+                : hojas.length === 0
+                  ? <>No hay hojas de vida.{puedeAbrirMasivo && <><br />Usá "Apertura masiva" para crearlas.</>}</>
+                  : 'Sin resultados para la búsqueda.'}
             </div>
           ) : (
             gruposPorTipo.map(([tipo, lista]) => {
-              const expandido = gruposExpandidos[tipo];
+              const expandido = estaExpandido(tipo);
               return (
                 <div key={tipo} style={{ marginBottom: 6 }}>
                   <div
+                    role="button" tabIndex={0} aria-expanded={expandido}
                     onClick={() => toggleGrupo(tipo)}
+                    onKeyDown={alActivar(() => toggleGrupo(tipo))}
                     style={{
                       display: 'flex', alignItems: 'center', gap: 6,
                       padding: '8px 4px', cursor: 'pointer',
                       fontSize: 12, color: '#4A5868', fontWeight: 500
                     }}
                   >
-                    <span style={{
+                    <span aria-hidden="true" style={{
                       transform: expandido ? 'rotate(90deg)' : 'rotate(0deg)',
-                      transition: 'transform 0.15s', fontSize: 10, color: '#9E9CBB'
+                      transition: 'transform 0.15s', fontSize: 10, color: '#5C6B7A'
                     }}>▶</span>
-                    <span style={{ color: '#9E9CBB', textTransform: 'uppercase', letterSpacing: '0.04em', fontSize: 10 }}>
+                    <span style={{ color: '#5C6B7A', textTransform: 'uppercase', letterSpacing: '0.04em', fontSize: 10 }}>
                       Tipo:
                     </span>
                     <strong>{tipo}</strong>
-                    <span style={{ marginLeft: 'auto', color: '#9E9CBB', fontSize: 11 }}>
+                    <span style={{ marginLeft: 'auto', color: '#5C6B7A', fontSize: 11 }}>
                       {lista.length}
                     </span>
                   </div>
@@ -234,15 +296,18 @@ function HojasDeVida() {
                     return (
                       <div
                         key={h.idHoja}
+                        role="button" tabIndex={0} aria-pressed={isSelected}
                         onClick={() => verHistoria(h.idEquipo)}
+                        onKeyDown={alActivar(() => verHistoria(h.idEquipo))}
                         style={{
                           background: isSelected ? '#F0F6FA' : 'white',
                           border: isSelected ? '1px solid #C8DCEA' : '1px solid #F1F4F7',
+                          borderLeft: isSelected ? '4px solid #1F6E8F' : '4px solid transparent',
                           borderRadius: 10, padding: 12,
                           marginBottom: 8, marginLeft: 14,
                           cursor: 'pointer', transition: 'all 0.15s'
                         }}
-                        onMouseOver={(e) => { if (!isSelected) e.currentTarget.style.background = '#FAFBFC'; }}
+                        onMouseOver={(e) => { if (!isSelected) e.currentTarget.style.background = '#F8FAFC'; }}
                         onMouseOut={(e) => { if (!isSelected) e.currentTarget.style.background = 'white'; }}
                       >
                         <div style={{ fontSize: 14, fontWeight: 600, color: '#1a1a1a', marginBottom: 6 }}>
@@ -253,7 +318,7 @@ function HojasDeVida() {
                             display: 'inline-block', padding: '2px 8px', borderRadius: 999,
                             background: cm.bg, color: cm.fg, fontSize: 10, fontWeight: 500
                           }}>{h.equipo?.marca?.nombre || '—'}</span>
-                          <span style={{ fontSize: 10, color: '#9E9CBB', fontFamily: 'monospace' }}>
+                          <span style={{ fontSize: 10, color: '#5C6B7A', fontFamily: 'monospace' }}>
                             {h.equipo?.nroSerie || '—'}
                           </span>
                         </div>
@@ -266,27 +331,25 @@ function HojasDeVida() {
           )}
         </div>
 
-        {}
-        <div style={{ padding: '24px 28px', maxHeight: 'calc(100vh - 180px)', overflowY: 'auto' }}>
+        <div className="hv-detalle" style={{ padding: '24px 28px', maxHeight: 'calc(100vh - 180px)', overflowY: 'auto' }}>
           {cargandoHistoria ? (
-            <div style={{ textAlign: 'center', padding: 60, color: '#9E9CBB', fontSize: 14 }}>
-              Cargando historia del equipo...
+            <div role="status" style={{ textAlign: 'center', padding: 60, color: '#5C6B7A', fontSize: 14 }}>
+              Cargando historia del equipo…
             </div>
           ) : !historia ? (
-            <div style={{ textAlign: 'center', padding: 80, color: '#9E9CBB', fontSize: 14 }}>
+            <div style={{ textAlign: 'center', padding: 80, color: '#5C6B7A', fontSize: 14 }}>
               Seleccioná un equipo de la lista para ver su hoja de vida.
             </div>
           ) : (
-            <HistoriaDetalle historia={historia} colorMarca={colorMarca} colorTipo={colorTipo} />
+            <HistoriaDetalle key={historia.equipo?.idEquipo} historia={historia} usuario={auth?.usuario?.nombre} />
           )}
         </div>
       </div>
 
-      {}
       {modalMasivo && (
         <div
-          onClick={() => setModalMasivo(false)}
-          className="rwd-modal-overlay"
+          onClick={cerrarModalMasivo}
+          className="rwd-modal-overlay no-print"
           style={{
             position:'fixed', top:0, left:0, right:0, bottom:0,
             background:'rgba(20,25,40,0.6)', backdropFilter: 'blur(4px)',
@@ -295,6 +358,7 @@ function HojasDeVida() {
           }}
         >
           <div
+            role="dialog" aria-modal="true" aria-labelledby="hv-masivo-titulo"
             onClick={(e) => e.stopPropagation()}
             className="rwd-modal-box"
             style={{
@@ -309,20 +373,24 @@ function HojasDeVida() {
               borderBottom: '1px solid #F0F3F7',
               display: 'flex', alignItems: 'center', gap: 16
             }}>
-              <div style={{
+              <div aria-hidden="true" style={{
                 width: 52, height: 52, borderRadius: 12,
                 background: 'linear-gradient(135deg, #EEEDFE 0%, #DCD9F5 100%)',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 fontSize: 24, flexShrink: 0
               }}>📋</div>
               <div style={{ flex: 1 }}>
-                <h3 style={{ margin: 0, color: '#1a1a1a', fontSize: 18, fontWeight: 700 }}>
+                <h3 id="hv-masivo-titulo" style={{ margin: 0, color: '#1a1a1a', fontSize: 18, fontWeight: 700 }}>
                   Apertura masiva de hojas de vida
                 </h3>
-                <p style={{ margin: '4px 0 0', color: '#6B7C8C', fontSize: 13 }}>
+                <p style={{ margin: '4px 0 0', color: '#5C6B7A', fontSize: 13 }}>
                   Crea automáticamente hojas de vida para todos los equipos que aún no tengan
                 </p>
               </div>
+              <button
+                onClick={cerrarModalMasivo} title="Cerrar (Esc)" aria-label="Cerrar"
+                style={{ background: '#F4F7FA', border: 'none', width: 32, height: 32, borderRadius: 8, fontSize: 18, cursor: 'pointer', color: '#5C6B7A' }}
+              >✕</button>
             </div>
 
             <div style={{ padding: '20px 28px' }}>
@@ -346,9 +414,12 @@ function HojasDeVida() {
               borderBottomRightRadius: 16,
               display:'flex', justifyContent:'flex-end', gap:10
             }}>
-              <button onClick={() => setModalMasivo(false)} style={btnGhost}>Cancelar</button>
-              <button onClick={generarParaTodos} style={btnSave}>
-                ✓ Generar hojas de vida
+              <button onClick={cerrarModalMasivo} disabled={generando} style={btnGhost}>Cancelar</button>
+              <button
+                onClick={generarParaTodos} disabled={generando}
+                style={{ ...btnSave, opacity: generando ? 0.6 : 1, cursor: generando ? 'not-allowed' : 'pointer' }}
+              >
+                {generando ? 'Generando…' : '✓ Generar hojas de vida'}
               </button>
             </div>
           </div>
@@ -360,36 +431,30 @@ function HojasDeVida() {
           from { opacity: 0; transform: translateY(-20px) scale(0.98); }
           to { opacity: 1; transform: translateY(0) scale(1); }
         }
+        .solo-print { display: none; }
         @media print {
           .no-print { display: none !important; }
+          .solo-print { display: block !important; }
+          .hv-grid { display: block !important; border-top: none !important; min-height: 0 !important; }
+          .hv-detalle { max-height: none !important; overflow: visible !important; padding: 0 !important; }
+          .hv-extra { display: block !important; }
         }
       `}</style>
     </>
   );
 }
 
-function HistoriaDetalle({ historia, colorMarca, colorTipo }) {
+function HistoriaDetalle({ historia, usuario }) {
   const { equipo, hojaDeVida, ubicaciones, ots, alertas, baja, metricas } = historia;
-
-  const fmtFecha = (f) => {
-    if (!f) return '—';
-    const d = new Date(f);
-    return d.toLocaleDateString('es-AR', { day: '2-digit', month: 'short', year: 'numeric' });
-  };
-
-  const fmtTiempo = (min) => {
-    if (!min) return '0 min';
-    const h = Math.floor(min / 60), m = min % 60;
-    if (h === 0) return `${m} min`;
-    if (m === 0) return `${h}h`;
-    return `${h}h ${m}min`;
-  };
+  const [verTodosTraslados, setVerTodosTraslados] = useState(false);
+  const [verTodasAlertas, setVerTodasAlertas] = useState(false);
+  const LIMITE = 5;
 
   const chipEstadoOT = (estado) => {
     const map = {
       'Pendiente':  { bg: '#FAEEDA', fg: '#633806' },
       'En curso':   { bg: '#E6F1FB', fg: '#0C447C' },
-      'Cerrada':    { bg: '#E1F5EE', fg: '#0F6E56' },
+      'Cerrada':    { bg: '#E1F5EE', fg: '#0B5A46' },
       'Anulada':    { bg: '#F1EFE8', fg: '#444441' }
     };
     return map[estado] || map['Anulada'];
@@ -397,10 +462,10 @@ function HistoriaDetalle({ historia, colorMarca, colorTipo }) {
 
   const chipResultadoSeg = (r) => {
     const map = {
-      'Aprobado':                       { bg: '#E1F5EE', fg: '#0F6E56' },
+      'Aprobado':                       { bg: '#E1F5EE', fg: '#0B5A46' },
       'Aprobado con observaciones':     { bg: '#FAEEDA', fg: '#633806' },
-      'Desaprobado':                    { bg: '#FCEBEB', fg: '#A32D2D' },
-      'Reprobado':                      { bg: '#FCEBEB', fg: '#A32D2D' },
+      'Desaprobado':                    { bg: '#FCEBEB', fg: '#8F2D14' },
+      'Reprobado':                      { bg: '#FCEBEB', fg: '#8F2D14' },
       'No aplica':                      { bg: '#F1EFE8', fg: '#444441' }
     };
     return map[r] || map['No aplica'];
@@ -413,10 +478,15 @@ function HistoriaDetalle({ historia, colorMarca, colorTipo }) {
 
   return (
     <>
-      {}
+      {/* Encabezado que solo aparece al imprimir */}
+      <div className="solo-print" style={{ textAlign: 'center', marginBottom: 16 }}>
+        <img src="/logonodus.jpg" alt="NODUS" style={{ height: 56, width: 'auto' }} />
+        <div style={{ fontSize: 12, color: '#4A5868', marginTop: 4 }}>Sistema de Control Patrimonial Hospitalario</div>
+      </div>
+
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
         <div>
-          <div style={{ fontSize: 11, color: '#9E9CBB', fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 6 }}>
+          <div style={{ fontSize: 11, color: '#5C6B7A', fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 6 }}>
             Hoja de vida · Equipo #{equipo.idEquipo}
           </div>
           <h1 style={{ fontSize: 28, fontWeight: 700, color: '#1a1a1a', margin: 0, lineHeight: 1.2 }}>
@@ -426,21 +496,20 @@ function HistoriaDetalle({ historia, colorMarca, colorTipo }) {
         <button
           onClick={imprimirPDF}
           className="no-print"
+          title='Se abre la impresión: elegí "Guardar como PDF" para obtener el archivo'
           style={{
             background: '#F0F6FA', color: '#4A5868', border: 'none',
             borderRadius: 6, padding: '8px 14px', fontSize: 11,
             fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase',
             cursor: 'pointer', flexShrink: 0
           }}
-          onMouseOver={(e) => { e.currentTarget.style.background = '#E0EBF3'; e.currentTarget.style.color = '#2C7DA0'; }}
+          onMouseOver={(e) => { e.currentTarget.style.background = '#E0EBF3'; e.currentTarget.style.color = '#1F6E8F'; }}
           onMouseOut={(e) => { e.currentTarget.style.background = '#F0F6FA'; e.currentTarget.style.color = '#4A5868'; }}
-        >🖨 Exportar PDF</button>
+        ><span aria-hidden="true">🖨 </span>Exportar PDF</button>
       </div>
 
-      {}
       <div style={{ height: 1, background: '#E5EDF3', marginBottom: 24 }}></div>
 
-      {}
       <div style={{ marginBottom: 30 }}>
         <FilaDetalle label="Equipo">
           <div style={{
@@ -452,11 +521,11 @@ function HistoriaDetalle({ historia, colorMarca, colorTipo }) {
             </div>
             <div className="rwd-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, fontSize: 12 }}>
               <div>
-                <div style={{ color: '#9E9CBB', fontSize: 10, textTransform: 'uppercase', marginBottom: 2 }}>Id</div>
+                <div style={{ color: '#5C6B7A', fontSize: 10, textTransform: 'uppercase', marginBottom: 2 }}>Id</div>
                 <div style={{ color: '#2D3748', fontWeight: 500 }}>{equipo.idEquipo}</div>
               </div>
               <div>
-                <div style={{ color: '#9E9CBB', fontSize: 10, textTransform: 'uppercase', marginBottom: 2 }}>Tipo</div>
+                <div style={{ color: '#5C6B7A', fontSize: 10, textTransform: 'uppercase', marginBottom: 2 }}>Tipo</div>
                 <span style={{
                   display: 'inline-block', padding: '2px 8px', borderRadius: 999,
                   background: ct.bg, color: ct.fg,
@@ -498,13 +567,17 @@ function HistoriaDetalle({ historia, colorMarca, colorTipo }) {
         </FilaDetalle>
 
         <FilaDetalle label="Garantía">
-          <span style={{ color: metricas?.garantiaVigente ? '#0F6E56' : '#B93B1B' }}>
-            📅 {fmtFecha(equipo.vencimientoGarantia)}
-            {' '}
-            <span style={{ fontSize: 11, fontWeight: 500 }}>
-              {metricas?.garantiaVigente ? '✓ Vigente' : '✗ Vencida'}
+          {!equipo.vencimientoGarantia ? (
+            <span style={{ color: '#5C6B7A' }}>Sin garantía registrada</span>
+          ) : (
+            <span style={{ color: metricas?.garantiaVigente ? '#0B5A46' : '#8F2D14' }}>
+              📅 {fmtFecha(equipo.vencimientoGarantia)}
+              {' '}
+              <span style={{ fontSize: 11, fontWeight: 600 }}>
+                {metricas?.garantiaVigente ? '✓ Vigente' : '✗ Vencida'}
+              </span>
             </span>
-          </span>
+          )}
         </FilaDetalle>
 
         {hojaDeVida && (
@@ -514,16 +587,15 @@ function HistoriaDetalle({ historia, colorMarca, colorTipo }) {
         )}
       </div>
 
-      {}
       {metricas && (
         <div style={{ marginBottom: 30 }}>
           <SeccionTitulo icono="📊" titulo="Métricas del ciclo de vida" />
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))', gap: 10 }}>
-            <MiniKPI label="Años" valor={metricas.antiguedadAnios} color="#5e51d6" />
-            <MiniKPI label="Traslados" valor={metricas.totalTraslados} color="#2C7DA0" />
-            <MiniKPI label="OTs" valor={metricas.totalOTs} color="#A37715" />
-            <MiniKPI label="Tareas" valor={metricas.totalIntervenciones} color="#5e51d6" />
-            <MiniKPI label="Alertas" valor={metricas.totalAlertas} color="#B93B1B" />
+            <MiniKPI label="Años" valor={metricas.antiguedadAnios} color="#4B3FBF" />
+            <MiniKPI label="Traslados" valor={metricas.totalTraslados} color="#1F6E8F" />
+            <MiniKPI label="OTs" valor={metricas.totalOTs} color="#7A4A00" />
+            <MiniKPI label="Tareas" valor={metricas.totalIntervenciones} color="#4B3FBF" />
+            <MiniKPI label="Alertas" valor={metricas.totalAlertas} color="#8F2D14" />
           </div>
           {metricas.totalMinutosIntervencion > 0 && (
             <div style={{
@@ -537,7 +609,6 @@ function HistoriaDetalle({ historia, colorMarca, colorTipo }) {
         </div>
       )}
 
-      {}
       {metricas?.dadoDeBaja && baja && (
         <div style={{
           background: 'linear-gradient(90deg, #FDECEE 0%, #F9D4DD 100%)',
@@ -550,45 +621,53 @@ function HistoriaDetalle({ historia, colorMarca, colorTipo }) {
           </div>
           <div style={{ fontSize: 12, color: '#4A5868', lineHeight: 1.6 }}>
             <div>📅 <strong>Fecha:</strong> {fmtFecha(baja.fecha)}</div>
-            <div><strong>Motivo:</strong> {baja.motivo}</div>
-            <div style={{ marginTop: 6 }}><strong>Informe técnico:</strong> {baja.informeObsolescencia}</div>
+            <div><strong>Motivo:</strong> {baja.motivo || '—'}</div>
+            <div style={{ marginTop: 6 }}><strong>Informe técnico:</strong> {baja.informeObsolescencia || '—'}</div>
           </div>
         </div>
       )}
 
-      {}
       {ubicaciones && ubicaciones.length > 0 && (
         <div style={{ marginBottom: 24 }}>
           <SeccionTitulo icono="📍" titulo={`Traslados (${ubicaciones.length})`} />
-          {ubicaciones.slice(0, 5).map(u => (
-            <div key={u.idUbicacion} style={{
-              background: '#FAFBFC', border: '1px solid #EEF1F4',
-              borderRadius: 10, padding: '12px 14px', marginBottom: 8
-            }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+          {ubicaciones.map((u, idx) => (
+            <div
+              key={u.idUbicacion}
+              className={idx >= LIMITE ? 'hv-extra' : undefined}
+              style={{
+                background: '#FAFBFC', border: '1px solid #EEF1F4',
+                borderRadius: 10, padding: '12px 14px', marginBottom: 8,
+                display: idx >= LIMITE && !verTodosTraslados ? 'none' : undefined
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, gap: 8, flexWrap: 'wrap' }}>
                 <div style={{ fontSize: 13, fontWeight: 500, color: '#1a1a1a' }}>
                   <strong>{u.sectorAnterior?.nombre || '—'}</strong>
-                  <span style={{ margin: '0 8px', color: '#9E9CBB' }}>→</span>
+                  <span aria-label="a" style={{ margin: '0 8px', color: '#5C6B7A' }}>→</span>
                   <strong>{u.sectorNuevo?.nombre || '—'}</strong>
                 </div>
-                <span style={{ fontSize: 11, color: '#6B7C8C' }}>
+                <span style={{ fontSize: 11, color: '#5C6B7A' }}>
                   📅 {fmtFecha(u.fechaTraslado)}
                 </span>
               </div>
-              <div style={{ fontSize: 11, color: '#6B7C8C' }}>
+              <div style={{ fontSize: 11, color: '#5C6B7A' }}>
                 🏥 {u.servicio?.nombre || '—'} · 👤 {u.usuario?.nombre || '—'}
               </div>
             </div>
           ))}
-          {ubicaciones.length > 5 && (
-            <div style={{ fontSize: 11, color: '#9E9CBB', fontStyle: 'italic', textAlign: 'center', marginTop: 4 }}>
-              ... y {ubicaciones.length - 5} traslado{ubicaciones.length - 5 > 1 ? 's' : ''} más
-            </div>
+          {ubicaciones.length > LIMITE && (
+            <button
+              type="button" className="no-print"
+              onClick={() => setVerTodosTraslados(v => !v)}
+              aria-expanded={verTodosTraslados}
+              style={btnVerMas}
+            >
+              {verTodosTraslados ? 'Ver menos' : `Ver los ${ubicaciones.length - LIMITE} traslado${ubicaciones.length - LIMITE > 1 ? 's' : ''} restante${ubicaciones.length - LIMITE > 1 ? 's' : ''}`}
+            </button>
           )}
         </div>
       )}
 
-      {}
       {ots && ots.length > 0 && (
         <div style={{ marginBottom: 24 }}>
           <SeccionTitulo icono="🔧" titulo={`Órdenes de trabajo (${ots.length})`} />
@@ -611,15 +690,14 @@ function HistoriaDetalle({ historia, colorMarca, colorTipo }) {
                 <div style={{ fontSize: 12, color: '#4A5868', marginBottom: 6, lineHeight: 1.5 }}>
                   {o.sintoma}
                 </div>
-                <div style={{ fontSize: 11, color: '#6B7C8C' }}>
+                <div style={{ fontSize: 11, color: '#5C6B7A' }}>
                   📅 {fmtFecha(o.fechaApertura)}
                   {o.fechaCierre && ` · Cierre: ${fmtFecha(o.fechaCierre)}`}
                 </div>
 
-                {}
                 {o.intervenciones && o.intervenciones.length > 0 && (
                   <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px dashed #E5EDF3' }}>
-                    <div style={{ fontSize: 10, color: '#9E9CBB', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
+                    <div style={{ fontSize: 10, color: '#5C6B7A', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
                       Tareas realizadas ({o.intervenciones.length})
                     </div>
                     {o.intervenciones.map(i => {
@@ -633,15 +711,15 @@ function HistoriaDetalle({ historia, colorMarca, colorTipo }) {
                             <span style={{
                               display: 'inline-block', padding: '2px 8px', borderRadius: 999,
                               background: crSeg.bg, color: crSeg.fg, fontSize: 10, fontWeight: 600
-                            }}>⚡ {i.resultadoSegElectrica === 'Reprobado' ? 'Desaprobado' : i.resultadoSegElectrica}</span>
-                            <span style={{ fontSize: 11, color: '#6B7C8C' }}>
+                            }}>⚡ {i.resultadoSegElectrica === 'Reprobado' ? 'Desaprobado' : (i.resultadoSegElectrica || 'No aplica')}</span>
+                            <span style={{ fontSize: 11, color: '#5C6B7A' }}>
                               {fmtTiempo(i.tiempoEmpleado)}
                             </span>
                           </div>
                           <div style={{ fontSize: 12, color: '#2D3748', lineHeight: 1.5, marginBottom: 4 }}>
                             {i.tareasRealizadas}
                           </div>
-                          <div style={{ fontSize: 10, color: '#9E9CBB' }}>
+                          <div style={{ fontSize: 10.5, color: '#5C6B7A' }}>
                             📅 Fecha de inicio: {fmtFecha(i.fecha)}
                             {i.fechaFin && <> · Fecha de fin: {fmtFecha(i.fechaFin)}</>}
                             {' '}· 👤 {i.usuario?.nombre || '—'}
@@ -652,10 +730,9 @@ function HistoriaDetalle({ historia, colorMarca, colorTipo }) {
                   </div>
                 )}
 
-                {}
                 {o.usosInsumo && o.usosInsumo.length > 0 && (
                   <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px dashed #E5EDF3' }}>
-                    <div style={{ fontSize: 10, color: '#9E9CBB', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
+                    <div style={{ fontSize: 10, color: '#5C6B7A', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
                       Insumos consumidos
                     </div>
                     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
@@ -664,7 +741,7 @@ function HistoriaDetalle({ historia, colorMarca, colorTipo }) {
                           display: 'inline-block', padding: '3px 10px', borderRadius: 999,
                           background: '#EEEDFE', color: '#3C3489',
                           fontSize: 11, fontWeight: 500
-                        }}>📦 {u.insumo?.nombre || 'insumo'} × {u.cantidad}</span>
+                        }}>📦 {u.insumo?.nombre || 'insumo'} × {u.cantidad} u.</span>
                       ))}
                     </div>
                   </div>
@@ -675,40 +752,54 @@ function HistoriaDetalle({ historia, colorMarca, colorTipo }) {
         </div>
       )}
 
-      {}
       {alertas && alertas.length > 0 && (
         <div style={{ marginBottom: 24 }}>
           <SeccionTitulo icono="🔔" titulo={`Alertas (${alertas.length})`} />
-          {alertas.slice(0, 5).map(a => (
-            <div key={a.idAlerta} style={{
-              background: '#FAFBFC', border: '1px solid #EEF1F4',
-              borderRadius: 10, padding: '12px 14px', marginBottom: 8,
-              borderLeft: '3px solid #E85A6D'
-            }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+          {alertas.map((a, idx) => (
+            <div
+              key={a.idAlerta}
+              className={idx >= LIMITE ? 'hv-extra' : undefined}
+              style={{
+                background: '#FAFBFC', border: '1px solid #EEF1F4',
+                borderRadius: 10, padding: '12px 14px', marginBottom: 8,
+                borderLeft: '3px solid #B93B1B',
+                display: idx >= LIMITE && !verTodasAlertas ? 'none' : undefined
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4, gap: 8 }}>
                 <div style={{ fontSize: 13, fontWeight: 600, color: '#1a1a1a' }}>
                   {a.tipo}
                 </div>
                 <span style={{
-                  fontSize: 10, fontWeight: 600, color: '#B93B1B',
+                  fontSize: 10, fontWeight: 600, color: '#8F2D14',
                   background: '#FAECE7', padding: '2px 8px', borderRadius: 4
                 }}>{a.estado}</span>
               </div>
-              <div style={{ fontSize: 11, color: '#6B7C8C' }}>
+              <div style={{ fontSize: 11, color: '#5C6B7A' }}>
                 📅 {fmtFecha(a.fechaGeneracion)} · 👤 {a.usuario?.nombre || '—'}
               </div>
             </div>
           ))}
+          {alertas.length > LIMITE && (
+            <button
+              type="button" className="no-print"
+              onClick={() => setVerTodasAlertas(v => !v)}
+              aria-expanded={verTodasAlertas}
+              style={btnVerMas}
+            >
+              {verTodasAlertas ? 'Ver menos' : `Ver las ${alertas.length - LIMITE} alerta${alertas.length - LIMITE > 1 ? 's' : ''} restante${alertas.length - LIMITE > 1 ? 's' : ''}`}
+            </button>
+          )}
         </div>
       )}
 
-      {}
       <div style={{
         marginTop: 30, paddingTop: 16,
         borderTop: '1px solid #E5EDF3',
-        fontSize: 11, color: '#9E9CBB', textAlign: 'center'
+        fontSize: 11, color: '#5C6B7A', textAlign: 'center'
       }}>
-        Documento generado el {new Date().toLocaleString('es-AR')} · Sistema NODUS
+        Documento generado el {new Date().toLocaleString('es-AR')}
+        {usuario ? ` por ${usuario}` : ''} · Sistema NODUS
       </div>
     </>
   );
@@ -721,7 +812,7 @@ function FilaDetalle({ label, children }) {
       borderBottom: '1px solid #F1F4F7',
       alignItems: 'flex-start', gap: 16
     }}>
-      <div style={{ flex: '0 0 160px', fontSize: 13, color: '#6B7C8C', fontWeight: 500, paddingTop: 2 }}>
+      <div style={{ flex: '0 0 160px', fontSize: 13, color: '#5C6B7A', fontWeight: 500, paddingTop: 2 }}>
         {label}
       </div>
       <div style={{ flex: 1, fontSize: 13, color: '#2D3748' }}>
@@ -738,11 +829,11 @@ function SeccionTitulo({ icono, titulo }) {
       marginBottom: 12, paddingBottom: 8,
       borderBottom: '1px solid #F0F3F7'
     }}>
-      <span style={{ fontSize: 14 }}>{icono}</span>
-      <span style={{
-        fontSize: 11, fontWeight: 700, color: '#4A5868',
+      <span aria-hidden="true" style={{ fontSize: 14 }}>{icono}</span>
+      <h2 style={{
+        fontSize: 11, fontWeight: 700, color: '#4A5868', margin: 0,
         textTransform: 'uppercase', letterSpacing: '0.08em'
-      }}>{titulo}</span>
+      }}>{titulo}</h2>
     </div>
   );
 }
@@ -753,7 +844,7 @@ function MiniKPI({ label, valor, color }) {
       background: 'white', border: '1px solid #EEF1F4',
       borderRadius: 10, padding: '10px 12px', textAlign: 'center'
     }}>
-      <div style={{ fontSize: 10, color: '#9E9CBB', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>
+      <div style={{ fontSize: 10, color: '#5C6B7A', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>
         {label}
       </div>
       <div style={{ fontSize: 22, fontWeight: 700, color }}>
@@ -764,7 +855,7 @@ function MiniKPI({ label, valor, color }) {
 }
 
 const btnGhost = {
-  background:'white', color:'#6B7C8C', border:'1px solid #E5EDF3',
+  background:'white', color:'#5C6B7A', border:'1px solid #E5EDF3',
   padding:'10px 18px', borderRadius:8, fontSize:13, fontWeight:600, cursor:'pointer'
 };
 const btnSave = {
@@ -773,6 +864,11 @@ const btnSave = {
   padding:'10px 20px', borderRadius:8,
   fontSize:13, fontWeight:600, cursor:'pointer',
   boxShadow: '0 2px 8px rgba(44,125,160,0.25)'
+};
+const btnVerMas = {
+  display: 'block', margin: '4px auto 0', background: 'transparent',
+  border: '1px solid #E5EDF3', borderRadius: 8, padding: '6px 14px',
+  fontSize: 12, fontWeight: 600, color: '#1F6E8F', cursor: 'pointer'
 };
 
 export default HojasDeVida;

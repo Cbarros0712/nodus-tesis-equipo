@@ -12,6 +12,14 @@ namespace NODUS.API.Controllers
     {
         private const int ID_ESTADO_EN_SERVICIO = 1;
 
+        private const int MAX_MODELO = 100;
+        private const int MAX_NRO_SERIE = 50;
+        private const int MAX_COMPONENTE = 150;
+        private const int MAX_COMPONENTES = 50;
+
+        private const string MSJ_NO_GUARDADO =
+            "No se pudo guardar el equipo. Revisá los datos (por ejemplo, que el número de serie no esté repetido) e intentá de nuevo.";
+
         private readonly NodusDbContext _db;
 
         public EquiposController(NodusDbContext db)
@@ -118,14 +126,8 @@ namespace NODUS.API.Controllers
         [HttpPost]
         public async Task<ActionResult<Equipo>> PostEquipo(EquipoInputDto input)
         {
-            if (string.IsNullOrWhiteSpace(input.Modelo))
-                return BadRequest("El modelo es obligatorio.");
-            if (string.IsNullOrWhiteSpace(input.NroSerie))
-                return BadRequest("El número de serie es obligatorio.");
-
-            var duplicado = await _db.Equipos.AnyAsync(e => e.NroSerie == input.NroSerie);
-            if (duplicado)
-                return BadRequest("El número de serie ya existe en otro equipo.");
+            var error = await ValidarInput(input, null);
+            if (error != null) return BadRequest(error);
 
             var equipo = new Equipo
             {
@@ -141,13 +143,14 @@ namespace NODUS.API.Controllers
                 IdTipo = input.IdTipo,
 
                 IdEstado = ID_ESTADO_EN_SERVICIO,
-                EquipoComponentes = (input.Componentes ?? new List<string>())
+                EquipoComponentes = LimpiarComponentes(input.Componentes)
                     .Select(nombre => new EquipoComponente { Componente = nombre })
                     .ToList()
             };
 
             _db.Equipos.Add(equipo);
-            await _db.SaveChangesAsync();
+            try { await _db.SaveChangesAsync(); }
+            catch (DbUpdateException) { return BadRequest(MSJ_NO_GUARDADO); }
             return CreatedAtAction(nameof(GetEquipo), new { id = equipo.IdEquipo }, equipo);
         }
 
@@ -162,9 +165,8 @@ namespace NODUS.API.Controllers
 
             if (equipo == null) return NotFound();
 
-            var duplicado = await _db.Equipos.AnyAsync(e => e.NroSerie == input.NroSerie && e.IdEquipo != id);
-            if (duplicado)
-                return BadRequest("El número de serie ya existe en otro equipo.");
+            var error = await ValidarInput(input, id);
+            if (error != null) return BadRequest(error);
 
             equipo.Modelo = input.Modelo;
             equipo.NroSerie = input.NroSerie;
@@ -178,7 +180,7 @@ namespace NODUS.API.Controllers
             equipo.IdTipo = input.IdTipo;
 
             _db.RemoveRange(equipo.EquipoComponentes);
-            equipo.EquipoComponentes = (input.Componentes ?? new List<string>())
+            equipo.EquipoComponentes = LimpiarComponentes(input.Componentes)
                 .Select(nombre => new EquipoComponente { IdEquipo = id, Componente = nombre })
                 .ToList();
 
@@ -188,6 +190,7 @@ namespace NODUS.API.Controllers
                 if (!_db.Equipos.Any(e => e.IdEquipo == id)) return NotFound();
                 throw;
             }
+            catch (DbUpdateException) { return BadRequest(MSJ_NO_GUARDADO); }
             return NoContent();
         }
 
@@ -202,6 +205,8 @@ namespace NODUS.API.Controllers
             var tieneHojaDeVida = await _db.HojasDeVida.AnyAsync(h => h.IdEquipo == id);
             var tieneAlertas = await _db.Alertas.AnyAsync(a => a.IdEquipo == id);
             var tieneBaja = await _db.BajasPatrimoniales.AnyAsync(b => b.IdEquipo == id);
+            var tienePrestamos = await _db.Set<Prestamo>().AnyAsync(p => p.IdEquipo == id);
+            var tieneReportes = await _db.ReportesFalla.AnyAsync(r => r.IdEquipo == id);
 
             var motivos = new List<string>();
             if (tieneOTs) motivos.Add("órdenes de trabajo");
@@ -209,6 +214,8 @@ namespace NODUS.API.Controllers
             if (tieneHojaDeVida) motivos.Add("hoja de vida");
             if (tieneAlertas) motivos.Add("alertas");
             if (tieneBaja) motivos.Add("baja patrimonial");
+            if (tienePrestamos) motivos.Add("préstamos");
+            if (tieneReportes) motivos.Add("reportes de falla");
 
             if (motivos.Any())
             {
@@ -223,10 +230,61 @@ namespace NODUS.API.Controllers
                 await _db.SaveChangesAsync();
                 return NoContent();
             }
-            catch (DbUpdateException ex)
+            catch (DbUpdateException)
             {
-                return BadRequest($"No se puede eliminar el equipo por restricciones de integridad: {ex.InnerException?.Message ?? ex.Message}");
+                return BadRequest("No se puede eliminar el equipo porque tiene registros asociados. Para retirarlo del sistema, registrá una baja patrimonial.");
             }
+        }
+
+        private static DateTime HoyArgentina() => DateTime.UtcNow.AddHours(-3).Date;
+
+        private static List<string> LimpiarComponentes(IEnumerable<string>? componentes) =>
+            (componentes ?? Enumerable.Empty<string>())
+                .Select(c => (c ?? string.Empty).Trim())
+                .Where(c => c.Length > 0)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+        // Valida y normaliza (recorta espacios) los datos recibidos. idActual es null al crear.
+        private async Task<string?> ValidarInput(EquipoInputDto input, int? idActual)
+        {
+            input.Modelo = (input.Modelo ?? string.Empty).Trim();
+            input.NroSerie = (input.NroSerie ?? string.Empty).Trim();
+
+            if (input.Modelo.Length == 0)
+                return "El modelo es obligatorio.";
+            if (input.Modelo.Length > MAX_MODELO)
+                return $"El modelo no puede superar los {MAX_MODELO} caracteres.";
+            if (input.NroSerie.Length == 0)
+                return "El número de serie es obligatorio.";
+            if (input.NroSerie.Length > MAX_NRO_SERIE)
+                return $"El número de serie no puede superar los {MAX_NRO_SERIE} caracteres.";
+
+            var serie = input.NroSerie.ToLower();
+            var duplicado = await _db.Equipos.AnyAsync(e =>
+                e.NroSerie.Trim().ToLower() == serie && (idActual == null || e.IdEquipo != idActual));
+            if (duplicado)
+                return "El número de serie ya existe en otro equipo.";
+
+            if (input.FechaAdquisicion == default)
+                return "La fecha de adquisición es obligatoria.";
+            if (input.FechaAdquisicion.Date > HoyArgentina())
+                return "La fecha de adquisición no puede ser futura.";
+            if (input.VencimientoGarantia.HasValue && input.VencimientoGarantia.Value.Date < input.FechaAdquisicion.Date)
+                return "El vencimiento de la garantía no puede ser anterior a la fecha de adquisición.";
+
+            if (!await _db.Set<Marca>().AnyAsync(m => m.IdMarca == input.IdMarca))
+                return "La marca seleccionada no existe.";
+            if (!await _db.Set<TipoActivo>().AnyAsync(t => t.IdTipo == input.IdTipo))
+                return "El tipo de activo seleccionado no existe.";
+
+            var componentes = LimpiarComponentes(input.Componentes);
+            if (componentes.Count > MAX_COMPONENTES)
+                return $"Un equipo no puede tener más de {MAX_COMPONENTES} componentes.";
+            if (componentes.Any(c => c.Length > MAX_COMPONENTE))
+                return $"Cada componente puede tener hasta {MAX_COMPONENTE} caracteres.";
+
+            return null;
         }
     }
 }

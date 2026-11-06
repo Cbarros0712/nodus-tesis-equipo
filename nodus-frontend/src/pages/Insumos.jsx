@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import api from '../api';
 import { useToast, mensajeDeError } from '../components/Toast';
+import ConfirmarDialogo from '../components/ConfirmarDialogo';
 
 function Insumos() {
   const toast = useToast();
@@ -12,6 +13,8 @@ function Insumos() {
   const [stockMinimo, setStockMinimo] = useState('');
   const [editando, setEditando] = useState(null);
   const [errores, setErrores] = useState({});
+  const [guardando, setGuardando] = useState(false);
+  const [insumoAEliminar, setInsumoAEliminar] = useState(null);
 
   const [modalAbierto, setModalAbierto] = useState(false);
   const [filtroTipo, setFiltroTipo] = useState('');
@@ -29,24 +32,29 @@ function Insumos() {
   }, [modalAbierto]);
 
   const cargarInsumos = async () => {
-    const r = await api.get('/insumos');
-    setInsumos(r.data);
+    try {
+      const r = await api.get('/insumos');
+      setInsumos(r.data);
+    } catch (err) {
+      toast.error('No se pudieron cargar los insumos', mensajeDeError(err, 'Revisá la conexión e intentá de nuevo.'));
+    }
+  };
+
+  const esEnteroNoNegativo = (v) => {
+    const n = Number(v);
+    return v !== '' && Number.isInteger(n) && n >= 0;
   };
 
   const validar = () => {
     const errs = {};
     if (!nombre || !nombre.trim()) errs.nombre = 'Falta ingresar el nombre del insumo';
+    else if (nombre.trim().length > 100) errs.nombre = 'El nombre no puede superar los 100 caracteres';
     if (!tipo || !tipo.trim()) errs.tipo = 'Falta ingresar el tipo';
+    else if (tipo.trim().length > 50) errs.tipo = 'El tipo no puede superar los 50 caracteres';
     if (stockActual === '' || stockActual === null) errs.stockActual = 'Falta el stock actual';
-    else {
-      const sa = parseInt(stockActual);
-      if (isNaN(sa) || sa < 0) errs.stockActual = 'El stock actual debe ser 0 o mayor';
-    }
+    else if (!esEnteroNoNegativo(stockActual)) errs.stockActual = 'El stock actual debe ser un número entero de 0 o más';
     if (stockMinimo === '' || stockMinimo === null) errs.stockMinimo = 'Falta el stock mínimo';
-    else {
-      const sm = parseInt(stockMinimo);
-      if (isNaN(sm) || sm < 0) errs.stockMinimo = 'El stock mínimo debe ser 0 o mayor';
-    }
+    else if (!esEnteroNoNegativo(stockMinimo)) errs.stockMinimo = 'El stock mínimo debe ser un número entero de 0 o más';
     return errs;
   };
 
@@ -63,6 +71,7 @@ function Insumos() {
   const cerrarModal = () => { setModalAbierto(false); limpiar(); };
 
   const guardar = async () => {
+    if (guardando) return;
     const errs = validar();
     setErrores(errs);
     if (Object.keys(errs).length > 0) return;
@@ -73,11 +82,15 @@ function Insumos() {
       stockActual: parseInt(stockActual),
       stockMinimo: parseInt(stockMinimo)
     };
+
+    setGuardando(true);
     try {
       if (editando) {
         await api.put(`/insumos/${editando}`, { idInsumo: editando, ...data });
+        toast.success('Insumo actualizado', `Se guardaron los cambios de ${data.nombre}.`);
       } else {
         await api.post('/insumos', data);
+        toast.success('Insumo registrado', `${data.nombre} se agregó al inventario.`);
       }
       cerrarModal();
       cargarInsumos();
@@ -86,13 +99,19 @@ function Insumos() {
         ? err.response.data
         : 'No se pudo guardar el insumo. Revisá los datos e intentá de nuevo.';
       setErrores({ __general: mensaje });
+    } finally {
+      setGuardando(false);
     }
   };
 
-  const eliminar = async (i) => {
-    if (!window.confirm(`¿Eliminar el insumo "${i.nombre}"?`)) return;
+  const eliminar = (i) => setInsumoAEliminar(i);
+
+  const confirmarEliminar = async () => {
+    const i = insumoAEliminar;
+    setInsumoAEliminar(null);
     try {
       await api.delete(`/insumos/${i.idInsumo}`);
+      toast.success('Insumo eliminado', `Se eliminó ${i.nombre} del inventario.`);
       cargarInsumos();
     } catch (err) {
       toast.error('No se pudo eliminar', mensajeDeError(err, 'Puede tener movimientos asociados.'));
@@ -141,8 +160,8 @@ function Insumos() {
   const chipEstado = (estado) => {
     const map = {
       ok:     { bg: '#E1F5EE', fg: '#0F6E56', label: 'OK' },
-      bajo:   { bg: '#FAEEDA', fg: '#A37715', label: 'Bajo' },
-      rotura: { bg: '#FAECE7', fg: '#B93B1B', label: 'Sin stock' }
+      bajo:   { bg: '#FAEEDA', fg: '#633806', label: 'Bajo' },
+      rotura: { bg: '#FAECE7', fg: '#8F2D14', label: 'Sin stock' }
     };
     return map[estado] || map.ok;
   };
@@ -151,7 +170,7 @@ function Insumos() {
     padding: '10px 0',
     fontSize: 14,
     fontWeight: activo ? 600 : 400,
-    color: activo ? '#1a1a1a' : '#6B7C8C',
+    color: activo ? '#1a1a1a' : '#5C6B7A',
     borderBottom: activo ? '2px solid #1a1a1a' : '2px solid transparent',
     cursor: 'pointer',
     transition: 'all 0.15s'
@@ -159,13 +178,12 @@ function Insumos() {
 
   const inpStyleErr = (campo) => ({
     ...inpStyle,
-    border: errores[campo] ? '1.5px solid #E85A6D' : '1.5px solid #E5EDF3',
+    border: errores[campo] ? '1.5px solid #B93B1B' : '1.5px solid #E5EDF3',
     background: errores[campo] ? '#FFF8F9' : '#FAFBFC'
   });
 
   return (
     <>
-      {}
       <div className="rwd-page-header" style={{ padding: '20px 24px 0', background: 'white' }}>
         <div style={{
           display: 'flex', justifyContent: 'space-between', alignItems: 'center',
@@ -185,7 +203,7 @@ function Insumos() {
               fontSize: 12, fontWeight: 600, letterSpacing: '0.5px'
             }}>INSUMOS</span>
 
-            <p style={{ fontSize: 13, color: '#6B7C8C', margin: 0, marginLeft: 8 }}>
+            <p style={{ fontSize: 13, color: '#5C6B7A', margin: 0, marginLeft: 8 }}>
               Gestión de insumos técnicos y consumibles
             </p>
           </div>
@@ -203,7 +221,6 @@ function Insumos() {
           >+ REGISTRAR INSUMO</button>
         </div>
 
-        {}
         <div style={{
           display: 'flex', gap: 24, borderBottom: '1px solid #E5EDF3',
           marginTop: 18, alignItems: 'center', flexWrap: 'wrap'
@@ -214,7 +231,7 @@ function Insumos() {
           {kpiBajo > 0 && (
             <div style={{
               ...tabStyle(false),
-              color: '#A37715',
+              color: '#633806',
               display: 'flex', alignItems: 'center', gap: 6
             }}>
               <span style={{
@@ -226,11 +243,11 @@ function Insumos() {
           {kpiRotura > 0 && (
             <div style={{
               ...tabStyle(false),
-              color: '#B93B1B',
+              color: '#8F2D14',
               display: 'flex', alignItems: 'center', gap: 6
             }}>
               <span style={{
-                width: 6, height: 6, borderRadius: '50%', background: '#E85A6D'
+                width: 6, height: 6, borderRadius: '50%', background: '#B93B1B'
               }}></span>
               Sin stock ({kpiRotura})
             </div>
@@ -242,6 +259,7 @@ function Insumos() {
             <select
               value={filtroTipo}
               onChange={e => setFiltroTipo(e.target.value)}
+              aria-label="Filtrar por tipo"
               style={{
                 background: filtroTipo ? '#F0F6FA' : 'white',
                 border: '1px solid #E5EDF3', borderRadius: 8,
@@ -272,7 +290,7 @@ function Insumos() {
               />
               {busqueda && busquedaAbierta && (
                 <span onClick={() => setBusqueda('')} title="Limpiar"
-                  style={{ color: '#9E9CBB', fontSize: 14, cursor: 'pointer' }}>✕</span>
+                  style={{ color: '#5C6B7A', fontSize: 14, cursor: 'pointer' }}>✕</span>
               )}
               <span
                 onClick={() => {
@@ -280,46 +298,52 @@ function Insumos() {
                   else { setBusquedaAbierta(!busquedaAbierta); }
                 }}
                 title={busquedaAbierta ? 'Cerrar' : 'Buscar'}
-                style={{ color: '#6B7C8C', fontSize: 16, cursor: 'pointer' }}
+                style={{ color: '#5C6B7A', fontSize: 16, cursor: 'pointer' }}
               >🔍</span>
             </div>
           </div>
         </div>
       </div>
 
-      {}
       <div className="rwd-table-wrap" style={{ padding: '20px 24px', background: 'white', overflowX: 'auto' }}>
         <table className="rwd-table" style={{ width: '100%', borderCollapse: 'collapse', minWidth: 650 }}>
           <thead>
             <tr style={{ textAlign: 'left' }}>
               <th style={thStyle}>Nombre</th>
               <th style={thStyle}>Tipo</th>
-              <th style={thStyle}>Stock actual</th>
-              <th style={thStyle}>Stock mínimo</th>
+              <th style={{ ...thStyle, textAlign: 'right' }}>Stock actual (u.)</th>
+              <th style={{ ...thStyle, textAlign: 'right' }}>Stock mínimo (u.)</th>
               <th style={thStyle}>Estado</th>
               <th style={{ ...thStyle, width: 80 }}></th>
             </tr>
           </thead>
           <tbody>
-            {insumosFiltrados.map(i => {
+            {insumosFiltrados.map((i, idx) => {
               const estado = estadoStock(i);
               const c = chipEstado(estado);
+              const fondo = idx % 2 === 1 ? '#F8FAFC' : 'white';
               return (
-                <tr key={i.idInsumo} style={{ borderBottom: '1px solid #F1F4F7' }}>
+                <tr
+                  key={i.idInsumo}
+                  style={{ borderBottom: '1px solid #F1F4F7', background: fondo, transition: 'background 0.1s' }}
+                  onMouseOver={(e) => e.currentTarget.style.background = '#F0F6FA'}
+                  onMouseOut={(e) => e.currentTarget.style.background = fondo}
+                >
                   <td style={{ ...tdStyle, fontSize: 13, fontWeight: 500, color: '#1a1a1a' }}>
                     {i.nombre}
                   </td>
-                  <td style={{ ...tdStyle, color: '#6B7C8C' }}>{i.tipo}</td>
+                  <td style={{ ...tdStyle, color: '#5C6B7A' }}>{i.tipo}</td>
                   <td style={{
                     ...tdStyle,
+                    textAlign: 'right',
                     fontWeight: 600,
-                    color: estado === 'rotura' ? '#B93B1B'
-                         : estado === 'bajo' ? '#A37715'
+                    color: estado === 'rotura' ? '#8F2D14'
+                         : estado === 'bajo' ? '#633806'
                          : '#2D3748'
                   }}>
                     {i.stockActual}
                   </td>
-                  <td style={{ ...tdStyle, color: '#6B7C8C' }}>{i.stockMinimo}</td>
+                  <td style={{ ...tdStyle, textAlign: 'right', color: '#5C6B7A' }}>{i.stockMinimo}</td>
                   <td style={tdStyle}>
                     <span style={{
                       display: 'inline-flex', alignItems: 'center', gap: 6,
@@ -336,7 +360,7 @@ function Insumos() {
                   <td style={tdStyle}>
                     <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
                       <button
-                        onClick={() => abrirModalEditar(i)} title="Editar"
+                        onClick={() => abrirModalEditar(i)} title="Editar insumo" aria-label={`Editar ${i.nombre}`}
                         style={{
                           background: '#F0F6FA', color: '#4A5868', border: 'none',
                           borderRadius: 4, padding: '4px 8px', fontSize: 12,
@@ -346,7 +370,7 @@ function Insumos() {
                         onMouseOut={(e) => e.currentTarget.style.background = '#F0F6FA'}
                       >✏</button>
                       <button
-                        onClick={() => eliminar(i)} title="Eliminar"
+                        onClick={() => eliminar(i)} title="Eliminar insumo" aria-label={`Eliminar ${i.nombre}`}
                         style={{
                           background: '#FDECEE', color: '#B93B1B', border: 'none',
                           borderRadius: 4, padding: '4px 8px', fontSize: 12,
@@ -361,20 +385,19 @@ function Insumos() {
               );
             })}
             {insumosFiltrados.length === 0 && (
-              <tr><td colSpan="6" style={{ textAlign: 'center', padding: 40, color: '#9E9CBB', fontSize: 13 }}>
+              <tr><td colSpan="6" style={{ textAlign: 'center', padding: 40, color: '#5C6B7A', fontSize: 13 }}>
                 {insumos.length === 0 ? 'No hay insumos registrados.' : 'No hay insumos que coincidan con los filtros.'}
               </td></tr>
             )}
           </tbody>
         </table>
 
-        <p style={{ fontSize: 12, color: '#9E9CBB', margin: '16px 0 0', textAlign: 'left' }}>
+        <p style={{ fontSize: 12, color: '#5C6B7A', margin: '16px 0 0', textAlign: 'left' }}>
           {insumosFiltrados.length} {insumosFiltrados.length === 1 ? 'registro' : 'registros'}
           {insumosFiltrados.length !== insumos.length ? ` (de ${insumos.length})` : ''}
         </p>
       </div>
 
-      {}
       {modalAbierto && (
         <div
           onClick={cerrarModal}
@@ -397,7 +420,6 @@ function Insumos() {
               animation: 'slideIn 0.25s ease-out'
             }}
           >
-            {}
             <div style={{
               padding: '24px 28px 20px',
               borderBottom: '1px solid #F0F3F7',
@@ -413,9 +435,9 @@ function Insumos() {
               </div>
               <div style={{ flex: 1 }}>
                 <h3 style={{ margin: 0, color: '#1a1a1a', fontSize: 18, fontWeight: 700 }}>
-                  {editando ? 'Editar insumo' : 'Insumo'}
+                  {editando ? 'Editar insumo' : 'Nuevo insumo'}
                 </h3>
-                <p style={{ margin: '4px 0 0', color: '#6B7C8C', fontSize: 13 }}>
+                <p style={{ margin: '4px 0 0', color: '#5C6B7A', fontSize: 13 }}>
                   {editando
                     ? 'Modificá los datos del insumo del inventario'
                     : 'Registrá un nuevo insumo técnico o consumible en el inventario'}
@@ -426,10 +448,11 @@ function Insumos() {
                 style={{
                   background: '#F4F7FA', border: 'none',
                   width: 32, height: 32, borderRadius: 8,
-                  fontSize: 18, cursor: 'pointer', color: '#6B7C8C',
+                  fontSize: 18, cursor: 'pointer', color: '#5C6B7A',
                   display: 'flex', alignItems: 'center', justifyContent: 'center'
                 }}
                 title="Cerrar (Esc)"
+                aria-label="Cerrar"
               >✕</button>
             </div>
 
@@ -449,7 +472,6 @@ function Insumos() {
                 </div>
               )}
 
-              {}
               <SeccionTitulo icono="📋" titulo="Identificación del insumo" />
               <div className="rwd-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 22 }}>
                 <div>
@@ -480,13 +502,12 @@ function Insumos() {
                 </div>
               </div>
 
-              {}
               <SeccionTitulo icono="📊" titulo="Niveles de stock" />
               <div className="rwd-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 6 }}>
                 <div>
-                  <label style={lblStyle}>Stock actual *</label>
+                  <label style={lblStyle}>Stock actual (unidades) *</label>
                   <input
-                    type="number" min="0"
+                    type="number" min="0" step="1"
                     value={stockActual}
                     onChange={e => cambiarCampo('stockActual', e.target.value, setStockActual)}
                     placeholder="0"
@@ -495,9 +516,9 @@ function Insumos() {
                   {errores.stockActual && <span style={errStyle}>⚠ {errores.stockActual}</span>}
                 </div>
                 <div>
-                  <label style={lblStyle}>Stock mínimo *</label>
+                  <label style={lblStyle}>Stock mínimo (unidades) *</label>
                   <input
-                    type="number" min="0"
+                    type="number" min="0" step="1"
                     value={stockMinimo}
                     onChange={e => cambiarCampo('stockMinimo', e.target.value, setStockMinimo)}
                     placeholder="0"
@@ -506,12 +527,11 @@ function Insumos() {
                   {errores.stockMinimo && <span style={errStyle}>⚠ {errores.stockMinimo}</span>}
                 </div>
               </div>
-              <small style={{ display: 'block', marginTop: 10, fontSize: 11, color: '#9E9CBB', fontStyle: 'italic' }}>
+              <small style={{ display: 'block', marginTop: 10, fontSize: 11, color: '#5C6B7A', fontStyle: 'italic' }}>
                 Cuando el stock actual sea menor al mínimo, el sistema alertará el nivel bajo.
               </small>
             </div>
 
-            {}
             <div style={{
               padding: '16px 28px',
               borderTop: '1px solid #F0F3F7',
@@ -521,15 +541,27 @@ function Insumos() {
               display:'flex', justifyContent:'flex-end', gap:10
             }}>
               <button onClick={cerrarModal} style={btnGhost}>Cancelar</button>
-              <button onClick={guardar} style={btnSave}>
-                {editando ? '✓ Actualizar insumo' : '✓ Registrar insumo'}
+              <button
+                onClick={guardar}
+                disabled={guardando}
+                style={{ ...btnSave, opacity: guardando ? 0.6 : 1, cursor: guardando ? 'not-allowed' : 'pointer' }}
+              >
+                {guardando ? 'Guardando…' : (editando ? '✓ Actualizar insumo' : '✓ Registrar insumo')}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {}
+      <ConfirmarDialogo
+        abierto={!!insumoAEliminar}
+        titulo="¿Eliminar insumo?"
+        mensaje={insumoAEliminar ? `Se eliminará el insumo "${insumoAEliminar.nombre}". Esta acción no se puede deshacer.` : ''}
+        textoConfirmar="Eliminar"
+        onConfirmar={confirmarEliminar}
+        onCancelar={() => setInsumoAEliminar(null)}
+      />
+
       <style>{`
         @keyframes slideIn {
           from { opacity: 0; transform: translateY(-20px) scale(0.98); }
@@ -557,8 +589,8 @@ function SeccionTitulo({ icono, titulo }) {
 }
 
 const thStyle = {
-  fontSize: 11, fontWeight: 500, color: '#6B7C8C',
-  padding: '12px 8px', borderBottom: '1px solid #F1F4F7',
+  fontSize: 11, fontWeight: 600, color: '#5C6B7A',
+  padding: '12px 8px', borderBottom: '1px solid #E5EDF3',
   textTransform: 'uppercase', letterSpacing: '0.4px'
 };
 const tdStyle = {
@@ -575,11 +607,11 @@ const inpStyle = {
   transition: 'all 0.15s', outline: 'none', fontFamily: 'inherit'
 };
 const errStyle = {
-  display: 'block', color: '#E85A6D', fontSize: 11,
+  display: 'block', color: '#B93B1B', fontSize: 11,
   marginTop: 6, fontWeight: 500
 };
 const btnGhost = {
-  background:'white', color:'#6B7C8C', border:'1px solid #E5EDF3',
+  background:'white', color:'#5C6B7A', border:'1px solid #E5EDF3',
   padding:'10px 18px', borderRadius:8, fontSize:13, fontWeight:600, cursor:'pointer'
 };
 const btnSave = {

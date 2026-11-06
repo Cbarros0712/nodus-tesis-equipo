@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import api from '../api';
 import { useToast, mensajeDeError } from '../components/Toast';
+import ConfirmarDialogo from '../components/ConfirmarDialogo';
 
 function UsosInsumo() {
   const toast = useToast();
@@ -13,6 +14,8 @@ function UsosInsumo() {
   const [idOT, setIdOT] = useState('');
   const [editando, setEditando] = useState(null);
   const [errores, setErrores] = useState({});
+  const [guardando, setGuardando] = useState(false);
+  const [usoAEliminar, setUsoAEliminar] = useState(null);
 
   const [buscadorOT, setBuscadorOT] = useState('');
   const [mostrarListaOT, setMostrarListaOT] = useState(false);
@@ -34,9 +37,12 @@ function UsosInsumo() {
     return () => window.removeEventListener('keydown', handleEsc);
   }, [modalAbierto]);
 
-  const cargarUsos    = async () => { const r = await api.get('/usosinsumo');     setUsos(r.data); };
-  const cargarOTs     = async () => { const r = await api.get('/ordenestrabajo'); setOts(r.data); };
-  const cargarInsumos = async () => { const r = await api.get('/insumos');        setInsumos(r.data); };
+  const avisoCarga = (err, que) =>
+    toast.error(`No se pudieron cargar ${que}`, mensajeDeError(err, 'Revisá la conexión e intentá de nuevo.'));
+
+  const cargarUsos    = async () => { try { const r = await api.get('/usosinsumo');     setUsos(r.data);     } catch (e) { avisoCarga(e, 'los consumos'); } };
+  const cargarOTs     = async () => { try { const r = await api.get('/ordenestrabajo'); setOts(r.data);      } catch (e) { avisoCarga(e, 'las órdenes de trabajo'); } };
+  const cargarInsumos = async () => { try { const r = await api.get('/insumos');        setInsumos(r.data);  } catch (e) { avisoCarga(e, 'los insumos'); } };
 
   const otsDisponibles = useMemo(() => ots.filter(o => o.estado !== 'Anulada'), [ots]);
 
@@ -102,12 +108,13 @@ function UsosInsumo() {
     const errs = {};
     if (!idOT) errs.idOT = 'Falta seleccionar la OT';
     if (!idInsumo) errs.idInsumo = 'Falta seleccionar el insumo';
-    if (!cantidad) errs.cantidad = 'Falta ingresar la cantidad';
+    if (cantidad === '') errs.cantidad = 'Falta ingresar la cantidad';
     else {
-      const cant = parseInt(cantidad);
-      if (isNaN(cant) || cant <= 0) errs.cantidad = 'La cantidad debe ser mayor a 0';
+      const cant = Number(cantidad);
+      if (!Number.isInteger(cant)) errs.cantidad = 'La cantidad debe ser un número entero';
+      else if (cant <= 0) errs.cantidad = 'La cantidad debe ser mayor a 0';
       else if (insumoSeleccionado && !editando && cant > insumoSeleccionado.stockActual) {
-        errs.cantidad = `La cantidad supera el stock disponible (${insumoSeleccionado.stockActual})`;
+        errs.cantidad = `La cantidad supera el stock disponible (${insumoSeleccionado.stockActual} u.)`;
       }
     }
     return errs;
@@ -125,6 +132,7 @@ function UsosInsumo() {
   const cerrarModal = () => { setModalAbierto(false); limpiar(); };
 
   const guardar = async () => {
+    if (guardando) return;
     const errs = validar();
     setErrores(errs);
     if (Object.keys(errs).length > 0) return;
@@ -134,11 +142,14 @@ function UsosInsumo() {
       idInsumo: parseInt(idInsumo),
       idOT: parseInt(idOT),
     };
+    setGuardando(true);
     try {
       if (editando) {
         await api.put(`/usosinsumo/${editando}`, { idUso: editando, ...data });
+        toast.success('Consumo actualizado', 'Se guardaron los cambios y se ajustó el stock.');
       } else {
         await api.post('/usosinsumo', data);
+        toast.success('Consumo registrado', `Se descontaron ${data.cantidad} u. del stock.`);
       }
       cerrarModal();
       cargarUsos();
@@ -148,13 +159,19 @@ function UsosInsumo() {
         ? err.response.data
         : 'No se pudo registrar el consumo. Revisá los datos e intentá de nuevo.';
       setErrores({ __general: mensaje });
+    } finally {
+      setGuardando(false);
     }
   };
 
-  const eliminar = async (u) => {
-    if (!window.confirm(`¿Eliminar este consumo? El stock (${u.cantidad}) se devolverá al insumo "${u.insumo?.nombre || ''}".`)) return;
+  const eliminar = (u) => setUsoAEliminar(u);
+
+  const confirmarEliminar = async () => {
+    const u = usoAEliminar;
+    setUsoAEliminar(null);
     try {
       await api.delete(`/usosinsumo/${u.idUso}`);
+      toast.success('Consumo eliminado', `Se devolvieron ${u.cantidad} u. al stock de ${u.insumo?.nombre || 'el insumo'}.`);
       cargarUsos();
       cargarInsumos();
     } catch (err) {
@@ -192,10 +209,13 @@ function UsosInsumo() {
     return { kpiTotalUsos: totalUsos, kpiUnidadesGastadas: unidades, usosFiltrados: filtrados };
   }, [usos, filtroOT, busqueda]);
 
+  const hayFiltros = !!filtroOT || !!busqueda.trim();
+  const limpiarFiltros = () => { setFiltroOT(''); setBusqueda(''); setBusquedaAbierta(false); };
+
   const chipStockInsumo = (i) => {
     if (!i) return { bg: '#F1EFE8', fg: '#444441', label: '—' };
-    if (i.stockActual === 0) return { bg: '#FAECE7', fg: '#B93B1B', label: 'Sin stock' };
-    if (i.stockActual < i.stockMinimo) return { bg: '#FAEEDA', fg: '#A37715', label: 'Stock bajo' };
+    if (i.stockActual === 0) return { bg: '#FAECE7', fg: '#8F2D14', label: 'Sin stock' };
+    if (i.stockActual < i.stockMinimo) return { bg: '#FAEEDA', fg: '#633806', label: 'Stock bajo' };
     return { bg: '#E1F5EE', fg: '#0F6E56', label: 'OK' };
   };
 
@@ -203,7 +223,7 @@ function UsosInsumo() {
     padding: '10px 0',
     fontSize: 14,
     fontWeight: activo ? 600 : 400,
-    color: activo ? '#1a1a1a' : '#6B7C8C',
+    color: activo ? '#1a1a1a' : '#5C6B7A',
     borderBottom: activo ? '2px solid #1a1a1a' : '2px solid transparent',
     cursor: 'pointer',
     transition: 'all 0.15s'
@@ -211,13 +231,12 @@ function UsosInsumo() {
 
   const inpStyleErr = (campo) => ({
     ...inpStyle,
-    border: errores[campo] ? '1.5px solid #E85A6D' : '1.5px solid #E5EDF3',
+    border: errores[campo] ? '1.5px solid #B93B1B' : '1.5px solid #E5EDF3',
     background: errores[campo] ? '#FFF8F9' : '#FAFBFC'
   });
 
   return (
     <>
-      {}
       <div className="rwd-page-header" style={{ padding: '20px 24px 0', background: 'white' }}>
         <div style={{
           display: 'flex', justifyContent: 'space-between', alignItems: 'center',
@@ -227,7 +246,7 @@ function UsosInsumo() {
             <h2 style={{
               fontSize: 16, fontWeight: 700, color: '#1a1a1a',
               margin: 0, letterSpacing: '0.5px'
-            }}>GESTIÓN DE INSUMOS</h2>
+            }}>CONSUMO DE INSUMOS</h2>
 
             <span style={{
               background: 'rgba(124, 110, 250, 0.12)',
@@ -237,7 +256,7 @@ function UsosInsumo() {
               fontSize: 12, fontWeight: 600, letterSpacing: '0.5px'
             }}>USO DE INSUMOS</span>
 
-            <p style={{ fontSize: 13, color: '#6B7C8C', margin: 0, marginLeft: 8 }}>
+            <p style={{ fontSize: 13, color: '#5C6B7A', margin: 0, marginLeft: 8 }}>
               Registro de insumos consumidos en cada OT — descuenta stock automáticamente
             </p>
           </div>
@@ -255,7 +274,6 @@ function UsosInsumo() {
           >+ REGISTRAR CONSUMO</button>
         </div>
 
-        {}
         <div style={{
           display: 'flex', gap: 24, borderBottom: '1px solid #E5EDF3',
           marginTop: 18, alignItems: 'center', flexWrap: 'wrap'
@@ -266,13 +284,13 @@ function UsosInsumo() {
           <div style={{
             padding: '10px 0',
             fontSize: 13,
-            color: '#6B7C8C',
+            color: '#5C6B7A',
             display: 'flex', alignItems: 'center', gap: 6
           }}>
             <span style={{
               width: 6, height: 6, borderRadius: '50%', background: '#F5A623'
             }}></span>
-            Unidades consumidas: <strong style={{ color: '#A37715' }}>{kpiUnidadesGastadas}</strong>
+            Unidades consumidas: <strong style={{ color: '#633806' }}>{kpiUnidadesGastadas} u.</strong>
           </div>
 
           <div style={{
@@ -281,6 +299,7 @@ function UsosInsumo() {
             <select
               value={filtroOT}
               onChange={e => setFiltroOT(e.target.value)}
+              aria-label="Filtrar por orden de trabajo"
               style={{
                 background: filtroOT ? '#F0F6FA' : 'white',
                 border: '1px solid #E5EDF3', borderRadius: 8,
@@ -306,6 +325,7 @@ function UsosInsumo() {
                 type="text" placeholder="Buscar consumo..."
                 value={busqueda} onChange={e => setBusqueda(e.target.value)}
                 autoFocus={busquedaAbierta}
+                aria-label="Buscar consumo"
                 style={{
                   background: 'transparent', border: 'none', outline: 'none',
                   fontSize: 13, padding: '4px 0', color: '#4A5868',
@@ -315,7 +335,7 @@ function UsosInsumo() {
               />
               {busqueda && busquedaAbierta && (
                 <span onClick={() => setBusqueda('')} title="Limpiar"
-                  style={{ color: '#9E9CBB', fontSize: 14, cursor: 'pointer' }}>✕</span>
+                  style={{ color: '#5C6B7A', fontSize: 14, cursor: 'pointer' }}>✕</span>
               )}
               <span
                 onClick={() => {
@@ -323,14 +343,24 @@ function UsosInsumo() {
                   else { setBusquedaAbierta(!busquedaAbierta); }
                 }}
                 title={busquedaAbierta ? 'Cerrar' : 'Buscar'}
-                style={{ color: '#6B7C8C', fontSize: 16, cursor: 'pointer' }}
+                style={{ color: '#5C6B7A', fontSize: 16, cursor: 'pointer' }}
               >🔍</span>
             </div>
+
+            {hayFiltros && (
+              <button
+                onClick={limpiarFiltros}
+                style={{
+                  background: 'transparent', border: '1px solid #E5EDF3', borderRadius: 8,
+                  padding: '6px 10px', fontSize: 12, color: '#2C7DA0',
+                  fontWeight: 600, cursor: 'pointer'
+                }}
+              >Limpiar filtros</button>
+            )}
           </div>
         </div>
       </div>
 
-      {}
       <div className="rwd-table-wrap" style={{ padding: '20px 24px', background: 'white', overflowX: 'auto' }}>
         <table className="rwd-table" style={{ width: '100%', borderCollapse: 'collapse', minWidth: 650 }}>
           <thead>
@@ -339,71 +369,78 @@ function UsosInsumo() {
               <th style={thStyle}>Equipo</th>
               <th style={thStyle}>Insumo</th>
               <th style={thStyle}>Tipo</th>
-              <th style={thStyle}>Cantidad</th>
+              <th style={{ ...thStyle, textAlign: 'right' }}>Cantidad (u.)</th>
               <th style={{ ...thStyle, width: 80 }}></th>
             </tr>
           </thead>
           <tbody>
-            {usosFiltrados.map(u => (
-              <tr key={u.idUso} style={{ borderBottom: '1px solid #F1F4F7' }}>
-                <td style={{ ...tdStyle, fontWeight: 600, color: '#1a1a1a' }}>
-                  OT {u.idOT}
-                </td>
-                <td style={{ ...tdStyle, color: '#2D3748' }}>
-                  {u.ordenTrabajo?.equipo?.modelo || '—'}
-                </td>
-                <td style={{ ...tdStyle, fontSize: 13, fontWeight: 500, color: '#1a1a1a' }}>
-                  <span style={{
-                    display: 'inline-block', padding: '3px 10px', borderRadius: 999,
-                    background: '#EEEDFE', color: '#3C3489',
-                    fontSize: 12, fontWeight: 500
-                  }}>{u.insumo?.nombre || '—'}</span>
-                </td>
-                <td style={{ ...tdStyle, color: '#6B7C8C' }}>{u.insumo?.tipo || '—'}</td>
-                <td style={{ ...tdStyle, fontWeight: 600, color: '#5e51d6' }}>
-                  {u.cantidad}
-                </td>
-                <td style={tdStyle}>
-                  <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
-                    <button
-                      onClick={() => abrirModalEditar(u)} title="Editar"
-                      style={{
-                        background: '#F0F6FA', color: '#4A5868', border: 'none',
-                        borderRadius: 4, padding: '4px 8px', fontSize: 12,
-                        cursor: 'pointer'
-                      }}
-                      onMouseOver={(e) => e.currentTarget.style.background = '#E0EBF3'}
-                      onMouseOut={(e) => e.currentTarget.style.background = '#F0F6FA'}
-                    >✏</button>
-                    <button
-                      onClick={() => eliminar(u)} title="Eliminar (devuelve al stock)"
-                      style={{
-                        background: '#FDECEE', color: '#B93B1B', border: 'none',
-                        borderRadius: 4, padding: '4px 8px', fontSize: 12,
-                        cursor: 'pointer'
-                      }}
-                      onMouseOver={(e) => e.currentTarget.style.background = '#F9D4DD'}
-                      onMouseOut={(e) => e.currentTarget.style.background = '#FDECEE'}
-                    >✕</button>
-                  </div>
-                </td>
-              </tr>
-            ))}
+            {usosFiltrados.map((u, idx) => {
+              const fondo = idx % 2 === 1 ? '#F8FAFC' : 'white';
+              return (
+                <tr
+                  key={u.idUso}
+                  style={{ borderBottom: '1px solid #F1F4F7', background: fondo, transition: 'background 0.1s' }}
+                  onMouseOver={(e) => e.currentTarget.style.background = '#F0F6FA'}
+                  onMouseOut={(e) => e.currentTarget.style.background = fondo}
+                >
+                  <td style={{ ...tdStyle, fontWeight: 600, color: '#1a1a1a' }}>
+                    OT {u.idOT}
+                  </td>
+                  <td style={{ ...tdStyle, color: '#2D3748' }}>
+                    {u.ordenTrabajo?.equipo?.modelo || '—'}
+                  </td>
+                  <td style={{ ...tdStyle, fontSize: 13, fontWeight: 500, color: '#1a1a1a' }}>
+                    <span style={{
+                      display: 'inline-block', padding: '3px 10px', borderRadius: 999,
+                      background: '#EEEDFE', color: '#3C3489',
+                      fontSize: 12, fontWeight: 500
+                    }}>{u.insumo?.nombre || '—'}</span>
+                  </td>
+                  <td style={{ ...tdStyle, color: '#5C6B7A' }}>{u.insumo?.tipo || '—'}</td>
+                  <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 600, color: '#4B3FBF' }}>
+                    {u.cantidad}
+                  </td>
+                  <td style={tdStyle}>
+                    <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                      <button
+                        onClick={() => abrirModalEditar(u)} title="Editar consumo" aria-label={`Editar consumo de la OT ${u.idOT}`}
+                        style={{
+                          background: '#F0F6FA', color: '#4A5868', border: 'none',
+                          borderRadius: 4, padding: '4px 8px', fontSize: 12,
+                          cursor: 'pointer'
+                        }}
+                        onMouseOver={(e) => e.currentTarget.style.background = '#E0EBF3'}
+                        onMouseOut={(e) => e.currentTarget.style.background = '#F0F6FA'}
+                      >✏</button>
+                      <button
+                        onClick={() => eliminar(u)} title="Eliminar (devuelve al stock)" aria-label={`Eliminar consumo de la OT ${u.idOT}`}
+                        style={{
+                          background: '#FDECEE', color: '#B93B1B', border: 'none',
+                          borderRadius: 4, padding: '4px 8px', fontSize: 12,
+                          cursor: 'pointer'
+                        }}
+                        onMouseOver={(e) => e.currentTarget.style.background = '#F9D4DD'}
+                        onMouseOut={(e) => e.currentTarget.style.background = '#FDECEE'}
+                      >✕</button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
             {usosFiltrados.length === 0 && (
-              <tr><td colSpan="6" style={{ textAlign: 'center', padding: 40, color: '#9E9CBB', fontSize: 13 }}>
+              <tr><td colSpan="6" style={{ textAlign: 'center', padding: 40, color: '#5C6B7A', fontSize: 13 }}>
                 {usos.length === 0 ? 'No hay consumos de insumos registrados.' : 'No hay registros que coincidan con el filtro.'}
               </td></tr>
             )}
           </tbody>
         </table>
 
-        <p style={{ fontSize: 12, color: '#9E9CBB', margin: '16px 0 0', textAlign: 'left' }}>
+        <p style={{ fontSize: 12, color: '#5C6B7A', margin: '16px 0 0', textAlign: 'left' }}>
           {usosFiltrados.length} {usosFiltrados.length === 1 ? 'registro' : 'registros'}
           {usosFiltrados.length !== usos.length ? ` (de ${usos.length})` : ''}
         </p>
       </div>
 
-      {}
       {modalAbierto && (
         <div
           onClick={cerrarModal}
@@ -426,7 +463,6 @@ function UsosInsumo() {
               animation: 'slideIn 0.25s ease-out'
             }}
           >
-            {}
             <div style={{
               padding: '24px 28px 20px',
               borderBottom: '1px solid #F0F3F7',
@@ -442,9 +478,9 @@ function UsosInsumo() {
               </div>
               <div style={{ flex: 1 }}>
                 <h3 style={{ margin: 0, color: '#1a1a1a', fontSize: 18, fontWeight: 700 }}>
-                  {editando ? 'Editar consumo' : 'Consumo de insumo'}
+                  {editando ? 'Editar consumo' : 'Nuevo consumo de insumo'}
                 </h3>
-                <p style={{ margin: '4px 0 0', color: '#6B7C8C', fontSize: 13 }}>
+                <p style={{ margin: '4px 0 0', color: '#5C6B7A', fontSize: 13 }}>
                   {editando
                     ? 'Modificá los datos del consumo registrado'
                     : 'Documentá el uso de un insumo dentro de una OT (descuenta stock)'}
@@ -455,10 +491,11 @@ function UsosInsumo() {
                 style={{
                   background: '#F4F7FA', border: 'none',
                   width: 32, height: 32, borderRadius: 8,
-                  fontSize: 18, cursor: 'pointer', color: '#6B7C8C',
+                  fontSize: 18, cursor: 'pointer', color: '#5C6B7A',
                   display: 'flex', alignItems: 'center', justifyContent: 'center'
                 }}
                 title="Cerrar (Esc)"
+                aria-label="Cerrar"
               >✕</button>
             </div>
 
@@ -478,7 +515,6 @@ function UsosInsumo() {
                 </div>
               )}
 
-              {}
               <SeccionTitulo icono="🔧" titulo="Orden de trabajo asociada" />
               <div style={{ marginBottom: 22, position: 'relative' }}>
                 <label style={lblStyle}>OT *</label>
@@ -495,16 +531,16 @@ function UsosInsumo() {
                       <div style={{ fontSize: 13, fontWeight: 600, color: '#1a1a1a' }}>
                         OT {otSeleccionada.idOT} · {otSeleccionada.tipo}
                       </div>
-                      <div style={{ fontSize: 11, color: '#6B7C8C', marginTop: 2 }}>
+                      <div style={{ fontSize: 11, color: '#5C6B7A', marginTop: 2 }}>
                         {otSeleccionada.equipo?.modelo || '—'} · Estado: {otSeleccionada.estado}
                       </div>
                     </div>
                     <button
                       type="button" onClick={limpiarOT}
-                      title="Cambiar OT"
+                      title="Cambiar OT" aria-label="Cambiar OT"
                       style={{
                         background: 'transparent', border: 'none',
-                        color: '#9E9CBB', fontSize: 16, cursor: 'pointer',
+                        color: '#5C6B7A', fontSize: 16, cursor: 'pointer',
                         padding: '4px 8px', borderRadius: 6
                       }}
                     >✕</button>
@@ -518,7 +554,7 @@ function UsosInsumo() {
                       <span style={{
                         position: 'absolute', left: 12, top: '50%',
                         transform: 'translateY(-50%)',
-                        color: '#9E9CBB', fontSize: 14, pointerEvents: 'none'
+                        color: '#5C6B7A', fontSize: 14, pointerEvents: 'none'
                       }}>🔍</span>
                       <input
                         type="text" value={buscadorOT}
@@ -526,6 +562,7 @@ function UsosInsumo() {
                         onFocus={() => setMostrarListaOT(true)}
                         onBlur={() => setTimeout(() => setMostrarListaOT(false), 200)}
                         placeholder="Buscar OT por número, tipo o modelo..."
+                        aria-label="Buscar OT"
                         style={{
                           width: '100%', padding: '10px 12px 10px 36px',
                           border: 'none', outline: 'none',
@@ -545,7 +582,7 @@ function UsosInsumo() {
                         zIndex: 20
                       }}>
                         {otsFiltradasBuscador.length === 0 ? (
-                          <div style={{ padding: '16px', textAlign: 'center', color: '#9E9CBB', fontSize: 12 }}>
+                          <div style={{ padding: '16px', textAlign: 'center', color: '#5C6B7A', fontSize: 12 }}>
                             {otsDisponibles.length === 0
                               ? 'No hay OTs disponibles. Creá una OT primero.'
                               : `No se encontraron OTs con "${buscadorOT}"`}
@@ -565,7 +602,7 @@ function UsosInsumo() {
                               <div style={{ fontSize: 13, fontWeight: 600, color: '#1a1a1a' }}>
                                 OT {o.idOT} · {o.tipo}
                               </div>
-                              <div style={{ fontSize: 11, color: '#6B7C8C', marginTop: 2 }}>
+                              <div style={{ fontSize: 11, color: '#5C6B7A', marginTop: 2 }}>
                                 {o.equipo?.modelo || '—'}
                               </div>
                             </div>
@@ -578,7 +615,6 @@ function UsosInsumo() {
                 {errores.idOT && <span style={errStyle}>⚠ {errores.idOT}</span>}
               </div>
 
-              {}
               <SeccionTitulo icono="📦" titulo="Insumo consumido" />
               <div style={{ marginBottom: 22, position: 'relative' }}>
                 <label style={lblStyle}>Insumo *</label>
@@ -595,10 +631,10 @@ function UsosInsumo() {
                       <div style={{ fontSize: 13, fontWeight: 600, color: '#1a1a1a' }}>
                         {insumoSeleccionado.nombre}
                       </div>
-                      <div style={{ fontSize: 11, color: '#6B7C8C', marginTop: 2, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <div style={{ fontSize: 11, color: '#5C6B7A', marginTop: 2, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                         <span>Tipo: {insumoSeleccionado.tipo}</span>
                         <span>·</span>
-                        <span>Stock disponible: <strong>{insumoSeleccionado.stockActual}</strong></span>
+                        <span>Stock disponible: <strong>{insumoSeleccionado.stockActual} u.</strong></span>
                         <span style={{
                           display: 'inline-block', padding: '2px 8px', borderRadius: 999,
                           background: chipStockInsumo(insumoSeleccionado).bg,
@@ -609,10 +645,10 @@ function UsosInsumo() {
                     </div>
                     <button
                       type="button" onClick={limpiarInsumo}
-                      title="Cambiar insumo"
+                      title="Cambiar insumo" aria-label="Cambiar insumo"
                       style={{
                         background: 'transparent', border: 'none',
-                        color: '#9E9CBB', fontSize: 16, cursor: 'pointer',
+                        color: '#5C6B7A', fontSize: 16, cursor: 'pointer',
                         padding: '4px 8px', borderRadius: 6
                       }}
                     >✕</button>
@@ -626,7 +662,7 @@ function UsosInsumo() {
                       <span style={{
                         position: 'absolute', left: 12, top: '50%',
                         transform: 'translateY(-50%)',
-                        color: '#9E9CBB', fontSize: 14, pointerEvents: 'none'
+                        color: '#5C6B7A', fontSize: 14, pointerEvents: 'none'
                       }}>🔍</span>
                       <input
                         type="text" value={buscadorInsumo}
@@ -634,6 +670,7 @@ function UsosInsumo() {
                         onFocus={() => setMostrarListaInsumo(true)}
                         onBlur={() => setTimeout(() => setMostrarListaInsumo(false), 200)}
                         placeholder="Buscar insumo por nombre o tipo..."
+                        aria-label="Buscar insumo"
                         style={{
                           width: '100%', padding: '10px 12px 10px 36px',
                           border: 'none', outline: 'none',
@@ -653,7 +690,7 @@ function UsosInsumo() {
                         zIndex: 20
                       }}>
                         {insumosFiltradosBuscador.length === 0 ? (
-                          <div style={{ padding: '16px', textAlign: 'center', color: '#9E9CBB', fontSize: 12 }}>
+                          <div style={{ padding: '16px', textAlign: 'center', color: '#5C6B7A', fontSize: 12 }}>
                             No se encontraron insumos con "{buscadorInsumo}"
                           </div>
                         ) : (
@@ -667,7 +704,7 @@ function UsosInsumo() {
                                 style={{
                                   padding: '10px 14px',
                                   cursor: sinStock ? 'not-allowed' : 'pointer',
-                                  opacity: sinStock ? 0.5 : 1,
+                                  opacity: sinStock ? 0.6 : 1,
                                   borderBottom: '1px solid #F1F4F7',
                                   transition: 'background 0.1s',
                                   display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8
@@ -679,8 +716,8 @@ function UsosInsumo() {
                                   <div style={{ fontSize: 13, fontWeight: 600, color: '#1a1a1a' }}>
                                     {i.nombre}
                                   </div>
-                                  <div style={{ fontSize: 11, color: '#6B7C8C', marginTop: 2 }}>
-                                    {i.tipo} · Stock: {i.stockActual}
+                                  <div style={{ fontSize: 11, color: '#5C6B7A', marginTop: 2 }}>
+                                    {i.tipo} · Stock: {i.stockActual} u.
                                   </div>
                                 </div>
                                 <span style={{
@@ -699,13 +736,12 @@ function UsosInsumo() {
                 {errores.idInsumo && <span style={errStyle}>⚠ {errores.idInsumo}</span>}
               </div>
 
-              {}
               <SeccionTitulo icono="📊" titulo="Cantidad utilizada" />
               <div className="rwd-grid" style={{ display: 'grid', gridTemplateColumns: '200px 1fr', gap: 14, alignItems: 'flex-start' }}>
                 <div>
-                  <label style={lblStyle}>Cantidad *</label>
+                  <label style={lblStyle}>Cantidad (unidades) *</label>
                   <input
-                    type="number" min="1"
+                    type="number" min="1" step="1"
                     max={insumoSeleccionado && !editando ? insumoSeleccionado.stockActual : undefined}
                     value={cantidad}
                     onChange={e => cambiarCampo('cantidad', e.target.value, setCantidad)}
@@ -720,22 +756,22 @@ function UsosInsumo() {
                     background: '#FAFBFC',
                     border: '1px solid #E5EDF3',
                     borderRadius: 8,
-                    fontSize: 12, color: '#6B7C8C'
+                    fontSize: 12, color: '#5C6B7A'
                   }}>
                     <div style={{ fontWeight: 600, color: '#4A5868', marginBottom: 4 }}>
                       📊 Después del consumo
                     </div>
                     <div>
-                      Stock actual: <strong>{insumoSeleccionado.stockActual}</strong>
+                      Stock actual: <strong>{insumoSeleccionado.stockActual} u.</strong>
                       {cantidad && parseInt(cantidad) > 0 && (
                         <>
                           {' → '}
                           <strong style={{
-                            color: (insumoSeleccionado.stockActual - parseInt(cantidad)) < 0 ? '#B93B1B'
-                                 : (insumoSeleccionado.stockActual - parseInt(cantidad)) < insumoSeleccionado.stockMinimo ? '#A37715'
+                            color: (insumoSeleccionado.stockActual - parseInt(cantidad)) < 0 ? '#8F2D14'
+                                 : (insumoSeleccionado.stockActual - parseInt(cantidad)) < insumoSeleccionado.stockMinimo ? '#633806'
                                  : '#0F6E56'
                           }}>
-                            {insumoSeleccionado.stockActual - parseInt(cantidad)}
+                            {insumoSeleccionado.stockActual - parseInt(cantidad)} u.
                           </strong>
                         </>
                       )}
@@ -746,7 +782,6 @@ function UsosInsumo() {
 
             </div>
 
-            {}
             <div style={{
               padding: '16px 28px',
               borderTop: '1px solid #F0F3F7',
@@ -756,15 +791,29 @@ function UsosInsumo() {
               display:'flex', justifyContent:'flex-end', gap:10
             }}>
               <button onClick={cerrarModal} style={btnGhost}>Cancelar</button>
-              <button onClick={guardar} style={btnSave}>
-                {editando ? '✓ Actualizar consumo' : '✓ Registrar consumo'}
+              <button
+                onClick={guardar}
+                disabled={guardando}
+                style={{ ...btnSave, opacity: guardando ? 0.6 : 1, cursor: guardando ? 'not-allowed' : 'pointer' }}
+              >
+                {guardando ? 'Guardando…' : (editando ? '✓ Actualizar consumo' : '✓ Registrar consumo')}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {}
+      <ConfirmarDialogo
+        abierto={!!usoAEliminar}
+        titulo="¿Eliminar consumo?"
+        mensaje={usoAEliminar
+          ? `Se eliminará este consumo y se devolverán ${usoAEliminar.cantidad} u. al stock del insumo "${usoAEliminar.insumo?.nombre || ''}".`
+          : ''}
+        textoConfirmar="Eliminar"
+        onConfirmar={confirmarEliminar}
+        onCancelar={() => setUsoAEliminar(null)}
+      />
+
       <style>{`
         @keyframes slideIn {
           from { opacity: 0; transform: translateY(-20px) scale(0.98); }
@@ -792,8 +841,8 @@ function SeccionTitulo({ icono, titulo }) {
 }
 
 const thStyle = {
-  fontSize: 11, fontWeight: 500, color: '#6B7C8C',
-  padding: '12px 8px', borderBottom: '1px solid #F1F4F7',
+  fontSize: 11, fontWeight: 600, color: '#5C6B7A',
+  padding: '12px 8px', borderBottom: '1px solid #E5EDF3',
   textTransform: 'uppercase', letterSpacing: '0.4px'
 };
 const tdStyle = {
@@ -810,11 +859,11 @@ const inpStyle = {
   transition: 'all 0.15s', outline: 'none', fontFamily: 'inherit'
 };
 const errStyle = {
-  display: 'block', color: '#E85A6D', fontSize: 11,
+  display: 'block', color: '#B93B1B', fontSize: 11,
   marginTop: 6, fontWeight: 500
 };
 const btnGhost = {
-  background:'white', color:'#6B7C8C', border:'1px solid #E5EDF3',
+  background:'white', color:'#5C6B7A', border:'1px solid #E5EDF3',
   padding:'10px 18px', borderRadius:8, fontSize:13, fontWeight:600, cursor:'pointer'
 };
 const btnSave = {

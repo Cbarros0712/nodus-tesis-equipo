@@ -11,6 +11,9 @@ namespace NODUS.API.Controllers
     {
         private readonly NodusDbContext _db;
 
+        private const string MSJ_NO_GUARDADO =
+            "No se pudo guardar la alerta. Revisá los datos e intentá de nuevo.";
+
         private static readonly string[] TIPOS_VALIDOS = {
             "Garantía por vencer",
             "Mantenimiento preventivo",
@@ -65,32 +68,53 @@ namespace NODUS.API.Controllers
         }
 
         [HttpPost]
-        public async Task<ActionResult<Alerta>> PostAlerta(Alerta alerta)
+        public async Task<ActionResult<Alerta>> PostAlerta(Alerta entrada)
         {
-            if (!TIPOS_VALIDOS.Contains(alerta.Tipo))
-                return BadRequest($"Tipo de alerta inválido. Valores permitidos: {string.Join(", ", TIPOS_VALIDOS)}.");
-            if (!ESTADOS_VALIDOS.Contains(alerta.Estado))
-                alerta.Estado = "No leída";
+            // Al crear, un estado vacío o desconocido se toma como "No leída".
+            var estado = (entrada.Estado ?? string.Empty).Trim();
+            if (!ESTADOS_VALIDOS.Contains(estado)) estado = "No leída";
+            entrada.Estado = estado;
 
-            alerta.FechaGeneracion = DateTime.SpecifyKind(alerta.FechaGeneracion, DateTimeKind.Utc);
+            var error = await ValidarAlerta(entrada);
+            if (error != null) return BadRequest(error);
+
+            // Solo se copian los campos conocidos (evita overposting de Equipo/Usuario anidados).
+            var alerta = new Alerta
+            {
+                Tipo = entrada.Tipo,
+                FechaGeneracion = DateTime.SpecifyKind(entrada.FechaGeneracion, DateTimeKind.Utc),
+                Estado = entrada.Estado,
+                IdEquipo = entrada.IdEquipo,
+                IdUsuario = entrada.IdUsuario
+            };
 
             _db.Alertas.Add(alerta);
-            await _db.SaveChangesAsync();
+            try { await _db.SaveChangesAsync(); }
+            catch (DbUpdateException) { return BadRequest(MSJ_NO_GUARDADO); }
 
             return CreatedAtAction(nameof(GetAlerta), new { id = alerta.IdAlerta }, alerta);
         }
 
         [HttpPut("{id}")]
-        public async Task<IActionResult> PutAlerta(int id, Alerta alerta)
+        public async Task<IActionResult> PutAlerta(int id, Alerta entrada)
         {
-            if (id != alerta.IdAlerta) return BadRequest();
-            if (!TIPOS_VALIDOS.Contains(alerta.Tipo))
-                return BadRequest("Tipo inválido.");
-            if (!ESTADOS_VALIDOS.Contains(alerta.Estado))
-                return BadRequest("Estado inválido.");
+            if (id != entrada.IdAlerta) return BadRequest();
 
-            alerta.FechaGeneracion = DateTime.SpecifyKind(alerta.FechaGeneracion, DateTimeKind.Utc);
-            _db.Entry(alerta).State = EntityState.Modified;
+            var alerta = await _db.Alertas.FindAsync(id);
+            if (alerta == null) return NotFound();
+
+            entrada.Estado = (entrada.Estado ?? string.Empty).Trim();
+            if (!ESTADOS_VALIDOS.Contains(entrada.Estado))
+                return BadRequest($"Estado inválido. Valores permitidos: {string.Join(", ", ESTADOS_VALIDOS)}.");
+
+            var error = await ValidarAlerta(entrada);
+            if (error != null) return BadRequest(error);
+
+            alerta.Tipo = entrada.Tipo;
+            alerta.FechaGeneracion = DateTime.SpecifyKind(entrada.FechaGeneracion, DateTimeKind.Utc);
+            alerta.Estado = entrada.Estado;
+            alerta.IdEquipo = entrada.IdEquipo;
+            alerta.IdUsuario = entrada.IdUsuario;
 
             try { await _db.SaveChangesAsync(); }
             catch (DbUpdateConcurrencyException)
@@ -98,6 +122,7 @@ namespace NODUS.API.Controllers
                 if (!await _db.Alertas.AnyAsync(a => a.IdAlerta == id)) return NotFound();
                 throw;
             }
+            catch (DbUpdateException) { return BadRequest(MSJ_NO_GUARDADO); }
 
             return NoContent();
         }
@@ -107,8 +132,13 @@ namespace NODUS.API.Controllers
         {
             var a = await _db.Alertas.FindAsync(id);
             if (a == null) return NotFound();
+
             _db.Alertas.Remove(a);
-            await _db.SaveChangesAsync();
+            try { await _db.SaveChangesAsync(); }
+            catch (DbUpdateException)
+            {
+                return BadRequest("No se puede eliminar la alerta porque tiene registros asociados.");
+            }
             return NoContent();
         }
 
@@ -150,11 +180,9 @@ namespace NODUS.API.Controllers
                 creadas++;
             }
 
-            var insumosCriticos = await _db.Insumos
-                .Where(i => i.StockActual < i.StockMinimo)
-                .ToListAsync();
-
-            foreach (var ins in insumosCriticos)
+            // Stock crítico: una sola alerta general (sin equipo) cada 24 hs mientras haya algún insumo bajo el mínimo.
+            bool hayStockCritico = await _db.Insumos.AnyAsync(i => i.StockActual < i.StockMinimo);
+            if (hayStockCritico)
             {
                 var hace24hs = ahora.AddHours(-24);
                 bool yaExiste = await _db.Alertas.AnyAsync(a =>
@@ -162,21 +190,26 @@ namespace NODUS.API.Controllers
                     && a.FechaGeneracion >= hace24hs
                     && (a.Estado == "No leída" || a.Estado == "Leída"));
 
-                if (yaExiste) { omitidas++; break; }
-
-                _db.Alertas.Add(new Alerta
+                if (yaExiste) omitidas++;
+                else
                 {
-                    Tipo = "Stock crítico",
-                    FechaGeneracion = ahora,
-                    Estado = "No leída",
-                    IdEquipo = null,
-                    IdUsuario = idUsuarioReportador
-                });
-                creadas++;
-                break;
+                    _db.Alertas.Add(new Alerta
+                    {
+                        Tipo = "Stock crítico",
+                        FechaGeneracion = ahora,
+                        Estado = "No leída",
+                        IdEquipo = null,
+                        IdUsuario = idUsuarioReportador
+                    });
+                    creadas++;
+                }
             }
 
-            await _db.SaveChangesAsync();
+            try { await _db.SaveChangesAsync(); }
+            catch (DbUpdateException)
+            {
+                return BadRequest("No se pudieron generar las alertas automáticas. Intentá de nuevo.");
+            }
 
             return Ok(new
             {
@@ -186,6 +219,28 @@ namespace NODUS.API.Controllers
                     ? "No se detectaron nuevas condiciones de alerta."
                     : $"Se generaron {creadas} alerta(s) automática(s). {omitidas} omitida(s) por ya existir."
             });
+        }
+
+        // Valida tipo, fecha y referencias. El estado ya viene normalizado por el llamador.
+        private async Task<string?> ValidarAlerta(Alerta a)
+        {
+            a.Tipo = (a.Tipo ?? string.Empty).Trim();
+            if (!TIPOS_VALIDOS.Contains(a.Tipo))
+                return $"Tipo de alerta inválido. Valores permitidos: {string.Join(", ", TIPOS_VALIDOS)}.";
+
+            if (a.FechaGeneracion == default)
+                return "La fecha de generación es obligatoria.";
+            // Límite = fecha UTC de hoy (>= la fecha local argentina), para tolerar el desfase del navegador.
+            if (a.FechaGeneracion.Date > DateTime.UtcNow.Date)
+                return "La fecha de generación no puede ser futura.";
+
+            if (a.IdUsuario <= 0 || !await _db.Usuarios.AnyAsync(u => u.IdUsuario == a.IdUsuario))
+                return "El usuario reportador no existe.";
+
+            if (a.IdEquipo.HasValue && !await _db.Equipos.AnyAsync(e => e.IdEquipo == a.IdEquipo.Value))
+                return "El equipo seleccionado no existe.";
+
+            return null;
         }
     }
 }

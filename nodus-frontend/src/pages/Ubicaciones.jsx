@@ -3,11 +3,29 @@ import api from '../api';
 import DatePicker from "react-datepicker";
 import "react-datepicker/dist/react-datepicker.css";
 import { FiCalendar } from "react-icons/fi";
+import { useToast, mensajeDeError } from '../components/Toast';
+
+// Las fechas se manejan como texto "AAAA-MM-DD" en hora local, para evitar el
+// corrimiento de un día que produce new Date("2026-11-05") (se interpreta en UTC).
+const fechaAISO = (d) => {
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${d.getFullYear()}-${mm}-${dd}`;
+};
+const ISOAFecha = (s) => {
+  if (!s) return null;
+  const [y, m, d] = s.split('-').map(Number);
+  return new Date(y, m - 1, d);
+};
 
 const CustomDateInput = forwardRef(({ value, onClick }, ref) => (
   <div
     onClick={onClick}
+    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } }}
     ref={ref}
+    role="button"
+    tabIndex={0}
+    aria-label={value ? `Fecha del traslado: ${value}. Presioná Enter para cambiarla` : 'Elegir fecha del traslado'}
     style={{
       width: "100%",
       height: "48px",
@@ -25,7 +43,7 @@ const CustomDateInput = forwardRef(({ value, onClick }, ref) => (
     <span
       style={{
         flex: 1,
-        color: value ? "#1F2937" : "#9CA3AF",
+        color: value ? "#1F2937" : "#6B7280",
         fontSize: "14px",
         whiteSpace: "nowrap",
         overflow: "hidden",
@@ -39,15 +57,15 @@ const CustomDateInput = forwardRef(({ value, onClick }, ref) => (
 ));
 
 function Ubicaciones() {
+  const toast = useToast();
   const [ubicaciones, setUbicaciones] = useState([]);
   const [equipos, setEquipos] = useState([]);
   const [sectores, setSectores] = useState([]);
   const [servicios, setServicios] = useState([]);
   const [usuarios, setUsuarios] = useState([]);
 
-  const anioActual = new Date().getFullYear();
-  const inicioAnio = new Date(anioActual, 0, 1);
   const hoy = new Date();
+  const inicioAnio = new Date(hoy.getFullYear(), 0, 1);
 
   const [fechaTraslado, setFechaTraslado] = useState('');
   const [idSectorAnterior, setIdSectorAnterior] = useState('');
@@ -57,6 +75,7 @@ function Ubicaciones() {
   const [idUsuario, setIdUsuario] = useState('');
   const [editando, setEditando] = useState(null);
   const [errores, setErrores] = useState({});
+  const [guardando, setGuardando] = useState(false);
 
   const [buscadorEquipo, setBuscadorEquipo] = useState('');
   const [mostrarLista, setMostrarLista] = useState(false);
@@ -78,11 +97,14 @@ function Ubicaciones() {
     return () => window.removeEventListener('keydown', handleEsc);
   }, [modalAbierto, modalHistorialEquipo]);
 
-  const cargarUbicaciones = async () => { const r = await api.get('/ubicaciones'); setUbicaciones(r.data); };
-  const cargarEquipos    = async () => { const r = await api.get('/equipos');     setEquipos(r.data); };
-  const cargarSectores   = async () => { const r = await api.get('/sectores');    setSectores(r.data); };
-  const cargarServicios  = async () => { const r = await api.get('/servicios');   setServicios(r.data); };
-  const cargarUsuarios   = async () => { const r = await api.get('/usuarios');    setUsuarios(r.data); };
+  const avisoCarga = (err, que) =>
+    toast.error(`No se pudieron cargar ${que}`, mensajeDeError(err, 'Revisá la conexión e intentá de nuevo.'));
+
+  const cargarUbicaciones = async () => { try { const r = await api.get('/ubicaciones'); setUbicaciones(r.data); } catch (e) { avisoCarga(e, 'los traslados'); } };
+  const cargarEquipos    = async () => { try { const r = await api.get('/equipos');     setEquipos(r.data);     } catch (e) { avisoCarga(e, 'los equipos'); } };
+  const cargarSectores   = async () => { try { const r = await api.get('/sectores');    setSectores(r.data);    } catch (e) { avisoCarga(e, 'los sectores'); } };
+  const cargarServicios  = async () => { try { const r = await api.get('/servicios');   setServicios(r.data);   } catch (e) { avisoCarga(e, 'los servicios'); } };
+  const cargarUsuarios   = async () => { try { const r = await api.get('/usuarios');    setUsuarios(r.data);    } catch (e) { avisoCarga(e, 'los usuarios'); } };
 
   const equiposPorSector = useMemo(() => {
     const map = {};
@@ -153,7 +175,8 @@ function Ubicaciones() {
     const q = buscadorEquipo.trim().toLowerCase();
     if (!q) return equipos.slice(0, 10);
     return equipos.filter(e =>
-      e.modelo?.toLowerCase().includes(q)
+      e.modelo?.toLowerCase().includes(q) ||
+      e.nroSerie?.toLowerCase().includes(q)
     ).slice(0, 10);
   }, [equipos, buscadorEquipo]);
 
@@ -166,17 +189,18 @@ function Ubicaciones() {
     if (!idEquipo) errs.idEquipo = 'Falta seleccionar el equipo a trasladar';
     if (!idSectorAnterior) errs.idSectorAnterior = 'Falta el sector de origen';
     if (!idSectorNuevo) errs.idSectorNuevo = 'Falta el sector de destino';
-    if (idSectorAnterior && idSectorNuevo && idSectorAnterior === idSectorNuevo) {
+    if (idSectorAnterior && idSectorNuevo && String(idSectorAnterior) === String(idSectorNuevo)) {
       errs.idSectorNuevo = 'El sector destino debe ser diferente al de origen';
     }
     if (!fechaTraslado) errs.fechaTraslado = 'Falta la fecha del traslado';
-    else if (new Date(fechaTraslado) > hoy) errs.fechaTraslado = 'La fecha no puede ser futura';
+    else if (fechaTraslado > fechaAISO(new Date())) errs.fechaTraslado = 'La fecha no puede ser futura';
     if (!idServicio) errs.idServicio = 'Falta seleccionar el servicio';
     if (!idUsuario) errs.idUsuario = 'Falta seleccionar el responsable';
     return errs;
   };
 
   const guardar = async () => {
+    if (guardando) return;
     const errs = validar();
     setErrores(errs);
     if (Object.keys(errs).length > 0) return;
@@ -189,11 +213,15 @@ function Ubicaciones() {
       idServicio: parseInt(idServicio),
       idUsuario: parseInt(idUsuario)
     };
+    const nombreSectorNuevo = sectores.find(s => s.idSector === data.idSectorNuevo)?.nombre || 'el nuevo sector';
+    setGuardando(true);
     try {
       if (editando) {
         await api.put(`/ubicaciones/${editando}`, { idUbicacion: editando, ...data });
+        toast.success('Traslado actualizado', 'Se guardaron los cambios del traslado.');
       } else {
         await api.post('/ubicaciones', data);
+        toast.success('Traslado registrado', `${equipoSeleccionado?.modelo || 'El equipo'} ahora está en ${nombreSectorNuevo}.`);
       }
       cerrarModal();
       cargarUbicaciones();
@@ -202,15 +230,30 @@ function Ubicaciones() {
         ? err.response.data
         : 'No se pudo registrar el traslado. Revisá los datos e intentá de nuevo.';
       setErrores({ __general: mensaje });
+    } finally {
+      setGuardando(false);
     }
+  };
+
+  // Sector donde está hoy un equipo (según su último traslado)
+  const sectorActualDeEquipo = (idEq) => {
+    const ultimo = ubicaciones
+      .filter(u => u.idEquipo === idEq)
+      .sort((a, b) => new Date(b.fechaTraslado) - new Date(a.fechaTraslado))[0];
+    return ultimo ? ultimo.idSectorNuevo : '';
   };
 
   const seleccionarEquipo = (eq) => {
     setIdEquipo(eq.idEquipo);
     setBuscadorEquipo('');
     setMostrarLista(false);
-    if (errores.idEquipo) {
-      setErrores(prev => { const n = { ...prev }; delete n.idEquipo; return n; });
+    // Sugiere como origen el sector actual del equipo (se puede cambiar)
+    if (!editando && !idSectorAnterior) {
+      const actual = sectorActualDeEquipo(eq.idEquipo);
+      if (actual) setIdSectorAnterior(actual);
+    }
+    if (errores.idEquipo || errores.idSectorAnterior) {
+      setErrores(prev => { const n = { ...prev }; delete n.idEquipo; delete n.idSectorAnterior; return n; });
     }
   };
 
@@ -248,13 +291,17 @@ function Ubicaciones() {
 
   const inpStyleErr = (campo) => ({
     ...inpStyle,
-    border: errores[campo] ? '1.5px solid #E85A6D' : '1.5px solid #E5EDF3',
+    border: errores[campo] ? '1.5px solid #B93B1B' : '1.5px solid #E5EDF3',
     background: errores[campo] ? '#FFF8F9' : '#FAFBFC'
   });
 
+  const etiquetaTarjeta = {
+    fontSize: 10, color: '#5C6B7A', marginBottom: 4,
+    textTransform: 'uppercase', letterSpacing: 0.5
+  };
+
   return (
     <>
-      {}
       <div className="rwd-page-header" style={{ padding: '20px 24px 0', background: 'white' }}>
         <div style={{
           display: 'flex', justifyContent: 'space-between', alignItems: 'center',
@@ -274,7 +321,7 @@ function Ubicaciones() {
               fontSize: 12, fontWeight: 600, letterSpacing: '0.5px'
             }}>UBICACIONES</span>
 
-            <p style={{ fontSize: 13, color: '#6B7C8C', margin: 0, marginLeft: 8 }}>
+            <p style={{ fontSize: 13, color: '#5C6B7A', margin: 0, marginLeft: 8 }}>
               Distribución de equipos por sector
             </p>
           </div>
@@ -293,7 +340,6 @@ function Ubicaciones() {
         </div>
       </div>
 
-      {}
       <div className="rwd-table-wrap" style={{
         padding: '20px 24px', background: 'white',
         display: 'flex', gap: 16, overflowX: 'auto',
@@ -313,13 +359,17 @@ function Ubicaciones() {
                   display: 'inline-block', padding: '5px 14px', borderRadius: 999,
                   background: c.bg, color: c.fg, fontSize: 13, fontWeight: 600
                 }}>{sector.nombre}</span>
-                <span style={{ color: '#9E9CBB', fontSize: 13, fontWeight: 500 }}>
+                <span
+                  style={{ color: '#5C6B7A', fontSize: 13, fontWeight: 600 }}
+                  title={`${equiposEnSector.length} ${equiposEnSector.length === 1 ? 'equipo' : 'equipos'}`}
+                  aria-label={`${equiposEnSector.length} ${equiposEnSector.length === 1 ? 'equipo' : 'equipos'}`}
+                >
                   {equiposEnSector.length}
                 </span>
               </div>
 
               {equiposEnSector.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '30px 10px', color: '#C4C9D1', fontSize: 12 }}>
+                <div style={{ textAlign: 'center', padding: '30px 10px', color: '#5C6B7A', fontSize: 12 }}>
                   Sin equipos
                 </div>
               ) : (
@@ -329,6 +379,10 @@ function Ubicaciones() {
                     <div
                       key={eq.idEquipo}
                       onClick={() => setModalHistorialEquipo(eq)}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setModalHistorialEquipo(eq); } }}
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`Ver historial de traslados de ${eq.modelo}`}
                       style={{
                         background: 'white', borderRadius: 10, padding: 14,
                         marginBottom: 10, border: '1px solid #EEF1F4',
@@ -347,20 +401,20 @@ function Ubicaciones() {
                       <div style={{ fontSize: 18, fontWeight: 600, color: '#1a1a1a', marginBottom: 8 }}>
                         #{eq.idEquipo}
                       </div>
-                      <div style={{ fontSize: 10, color: '#9E9CBB', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>Equipo</div>
+                      <div style={etiquetaTarjeta}>N° de serie</div>
                       <div style={{
                         display: 'inline-block', padding: '2px 8px', borderRadius: 4,
                         background: '#F1F4F7', fontSize: 11, fontFamily: 'monospace',
                         color: '#4A5868', marginBottom: 10
                       }}>{eq.nroSerie}</div>
-                      <div style={{ fontSize: 10, color: '#9E9CBB', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>Marca</div>
+                      <div style={etiquetaTarjeta}>Marca</div>
                       <div style={{ marginBottom: 10 }}>
                         <span style={{
                           display: 'inline-block', padding: '3px 10px', borderRadius: 999,
                           background: cm.bg, color: cm.fg, fontSize: 11, fontWeight: 500
                         }}>{eq.marca?.nombre || '—'}</span>
                       </div>
-                      <div style={{ fontSize: 10, color: '#9E9CBB', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>Modelo</div>
+                      <div style={etiquetaTarjeta}>Modelo</div>
                       <div style={{ fontSize: 13, color: '#2D3748', fontWeight: 500 }}>
                         {eq.modelo}
                       </div>
@@ -373,13 +427,12 @@ function Ubicaciones() {
         })}
 
         {sectores.length === 0 && (
-          <div style={{ textAlign: 'center', padding: 40, color: '#9E9CBB', flex: 1 }}>
+          <div style={{ textAlign: 'center', padding: 40, color: '#5C6B7A', flex: 1 }}>
             No hay sectores configurados.
           </div>
         )}
       </div>
 
-      {}
       {modalAbierto && (
         <div
           onClick={cerrarModal}
@@ -402,7 +455,6 @@ function Ubicaciones() {
               animation: 'slideIn 0.25s ease-out'
             }}
           >
-            {}
             <div style={{
               padding: '24px 28px 20px',
               borderBottom: '1px solid #F0F3F7',
@@ -418,9 +470,9 @@ function Ubicaciones() {
               </div>
               <div style={{ flex: 1 }}>
                 <h3 style={{ margin: 0, color: '#1a1a1a', fontSize: 18, fontWeight: 700 }}>
-                  {editando ? 'Editar traslado' : 'Traslado de equipo'}
+                  {editando ? 'Editar traslado' : 'Nuevo traslado de equipo'}
                 </h3>
-                <p style={{ margin: '4px 0 0', color: '#6B7C8C', fontSize: 13 }}>
+                <p style={{ margin: '4px 0 0', color: '#5C6B7A', fontSize: 13 }}>
                   {editando
                     ? 'Modificá los datos del traslado registrado'
                     : 'Documentá el movimiento del equipo entre sectores del hospital'}
@@ -431,10 +483,11 @@ function Ubicaciones() {
                 style={{
                   background: '#F4F7FA', border: 'none',
                   width: 32, height: 32, borderRadius: 8,
-                  fontSize: 18, cursor: 'pointer', color: '#6B7C8C',
+                  fontSize: 18, cursor: 'pointer', color: '#5C6B7A',
                   display: 'flex', alignItems: 'center', justifyContent: 'center'
                 }}
                 title="Cerrar (Esc)"
+                aria-label="Cerrar"
               >✕</button>
             </div>
 
@@ -453,7 +506,6 @@ function Ubicaciones() {
                 </div>
               )}
 
-              {}
               <SeccionTitulo icono="🏥" titulo="Equipo a trasladar" />
               <div style={{ marginBottom: 22, position: 'relative' }}>
                 <label style={lblStyle}>Equipo *</label>
@@ -468,17 +520,22 @@ function Ubicaciones() {
                     <span style={{ fontSize: 14 }}>✓</span>
                     <div style={{ flex: 1, fontSize: 13, fontWeight: 600, color: '#1a1a1a' }}>
                       {equipoSeleccionado.modelo}
+                      {equipoSeleccionado.nroSerie && (
+                        <span style={{ fontWeight: 400, color: '#5C6B7A' }}> · S/N {equipoSeleccionado.nroSerie}</span>
+                      )}
                     </div>
-                    <button
-                      type="button"
-                      onClick={limpiarEquipo}
-                      title="Cambiar equipo"
-                      style={{
-                        background: 'transparent', border: 'none',
-                        color: '#9E9CBB', fontSize: 16, cursor: 'pointer',
-                        padding: '4px 8px', borderRadius: 6
-                      }}
-                    >✕</button>
+                    {!editando && (
+                      <button
+                        type="button"
+                        onClick={limpiarEquipo}
+                        title="Cambiar equipo" aria-label="Cambiar equipo"
+                        style={{
+                          background: 'transparent', border: 'none',
+                          color: '#5C6B7A', fontSize: 16, cursor: 'pointer',
+                          padding: '4px 8px', borderRadius: 6
+                        }}
+                      >✕</button>
+                    )}
                   </div>
                 ) : (
                   <>
@@ -491,7 +548,7 @@ function Ubicaciones() {
                       <span style={{
                         position: 'absolute', left: 12, top: '50%',
                         transform: 'translateY(-50%)',
-                        color: '#9E9CBB', fontSize: 14, pointerEvents: 'none'
+                        color: '#5C6B7A', fontSize: 14, pointerEvents: 'none'
                       }}>🔍</span>
                       <input
                         type="text"
@@ -502,7 +559,8 @@ function Ubicaciones() {
                         }}
                         onFocus={() => setMostrarLista(true)}
                         onBlur={() => setTimeout(() => setMostrarLista(false), 200)}
-                        placeholder="Buscar equipo..."
+                        placeholder="Buscar equipo por modelo o N° de serie..."
+                        aria-label="Buscar equipo"
                         style={{
                           width: '100%', padding: '10px 12px 10px 36px',
                           border: 'none', outline: 'none',
@@ -524,7 +582,7 @@ function Ubicaciones() {
                         {equiposFiltradosBuscador.length === 0 ? (
                           <div style={{
                             padding: '16px', textAlign: 'center',
-                            color: '#9E9CBB', fontSize: 12
+                            color: '#5C6B7A', fontSize: 12
                           }}>
                             No se encontraron equipos con "{buscadorEquipo}"
                           </div>
@@ -544,6 +602,9 @@ function Ubicaciones() {
                               onMouseOut={(e) => e.currentTarget.style.background = 'white'}
                             >
                               {eq.modelo}
+                              {eq.nroSerie && (
+                                <span style={{ fontWeight: 400, color: '#5C6B7A', fontSize: 11 }}> · S/N {eq.nroSerie}</span>
+                              )}
                             </div>
                           ))
                         )}
@@ -555,7 +616,6 @@ function Ubicaciones() {
                 {errores.idEquipo && <span style={errStyle}>⚠ {errores.idEquipo}</span>}
               </div>
 
-              {}
               <SeccionTitulo icono="🔄" titulo="Movimiento entre sectores" />
               <div className="rwd-grid" style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: 12, alignItems: 'end', marginBottom: 22 }}>
                 <div>
@@ -570,8 +630,8 @@ function Ubicaciones() {
                   </select>
                   {errores.idSectorAnterior && <span style={errStyle}>⚠ {errores.idSectorAnterior}</span>}
                 </div>
-                <div style={{
-                  fontSize: 20, color: '#9E9CBB',
+                <div aria-hidden="true" style={{
+                  fontSize: 20, color: '#5C6B7A',
                   paddingBottom: errores.idSectorAnterior || errores.idSectorNuevo ? 26 : 10
                 }}>→</div>
                 <div>
@@ -588,19 +648,14 @@ function Ubicaciones() {
                 </div>
               </div>
 
-              {}
               <SeccionTitulo icono="📋" titulo="Asignación y responsable" />
               <div className="rwd-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 6 }}>
                 <div>
                   <label style={lblStyle}>Fecha del traslado *</label>
                   <DatePicker
-                    selected={fechaTraslado ? new Date(fechaTraslado) : null}
+                    selected={ISOAFecha(fechaTraslado)}
                     onChange={(date) => {
-                      cambiarCampo(
-                        "fechaTraslado",
-                        date ? date.toISOString().split("T")[0] : "",
-                        setFechaTraslado
-                      );
+                      cambiarCampo("fechaTraslado", date ? fechaAISO(date) : "", setFechaTraslado);
                     }}
                     dateFormat="dd/MM/yyyy"
                     maxDate={hoy}
@@ -639,7 +694,6 @@ function Ubicaciones() {
               </div>
             </div>
 
-            {}
             <div style={{
               padding: '16px 28px',
               borderTop: '1px solid #F0F3F7',
@@ -649,15 +703,18 @@ function Ubicaciones() {
               display:'flex', justifyContent:'flex-end', gap:10
             }}>
               <button onClick={cerrarModal} style={btnGhost}>Cancelar</button>
-              <button onClick={guardar} style={btnSave}>
-                {editando ? '✓ Actualizar traslado' : '✓ Registrar traslado'}
+              <button
+                onClick={guardar}
+                disabled={guardando}
+                style={{ ...btnSave, opacity: guardando ? 0.6 : 1, cursor: guardando ? 'not-allowed' : 'pointer' }}
+              >
+                {guardando ? 'Guardando…' : (editando ? '✓ Actualizar traslado' : '✓ Registrar traslado')}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {}
       {modalHistorialEquipo && (
         <div
           onClick={() => setModalHistorialEquipo(null)}
@@ -680,39 +737,47 @@ function Ubicaciones() {
             <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16, borderBottom:'1px solid #eee', paddingBottom:12 }}>
               <div>
                 <h3 style={{ margin:0, color:'#1a1a1a' }}>📍 Historial de traslados</h3>
-                <div style={{ fontSize:13, color:'#666', marginTop:4 }}>
+                <div style={{ fontSize:13, color:'#5C6B7A', marginTop:4 }}>
                   <strong>{modalHistorialEquipo.modelo}</strong> · S/N {modalHistorialEquipo.nroSerie}
                 </div>
               </div>
               <button
                 onClick={() => setModalHistorialEquipo(null)}
-                style={{ background:'none', border:'none', fontSize:24, cursor:'pointer', color:'#999', lineHeight:1 }}
-                title="Cerrar (Esc)"
+                style={{ background:'none', border:'none', fontSize:24, cursor:'pointer', color:'#5C6B7A', lineHeight:1 }}
+                title="Cerrar (Esc)" aria-label="Cerrar"
               >✕</button>
             </div>
 
             {historialDeEquipo(modalHistorialEquipo.idEquipo).length === 0 ? (
-              <div style={{ textAlign:'center', padding:40, color:'#9E9CBB', fontSize:13 }}>
+              <div style={{ textAlign:'center', padding:40, color:'#5C6B7A', fontSize:13 }}>
                 Sin traslados registrados.
               </div>
             ) : (
               historialDeEquipo(modalHistorialEquipo.idEquipo).map((u, idx) => (
                 <div key={u.idUbicacion}
-                  style={{ border:'1px solid #eee', borderRadius:8, padding:12, marginBottom:10, borderLeft: idx === 0 ? '4px solid #2DD4A0' : '4px solid #C4C9D1' }}>
-                  <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:6 }}>
-                    <span style={{ fontSize:11, color:'#9E9CBB', fontWeight:600, textTransform:'uppercase' }}>
+                  style={{ border:'1px solid #eee', borderRadius:8, padding:12, marginBottom:10, borderLeft: idx === 0 ? '4px solid #0F6E56' : '4px solid #8A94A0' }}>
+                  <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:6, gap: 8, flexWrap:'wrap' }}>
+                    <span style={{ fontSize:11, color: idx === 0 ? '#0F6E56' : '#5C6B7A', fontWeight:700, textTransform:'uppercase' }}>
                       {idx === 0 ? '⭐ ACTUAL' : 'Traslado anterior'}
                     </span>
-                    <span style={{ fontSize:12, color:'#6B7C8C' }}>
+                    <span style={{ fontSize:12, color:'#5C6B7A', display:'flex', alignItems:'center', gap:8 }}>
                       📅 {u.fechaTraslado?.split('T')[0]}
+                      <button
+                        onClick={() => { setModalHistorialEquipo(null); abrirModalEditar(u); }}
+                        title="Editar este traslado" aria-label="Editar este traslado"
+                        style={{
+                          background: '#F0F6FA', color: '#4A5868', border: 'none',
+                          borderRadius: 4, padding: '2px 8px', fontSize: 12, cursor: 'pointer'
+                        }}
+                      >✏</button>
                     </span>
                   </div>
                   <div style={{ fontSize:13, color:'#2D3748' }}>
                     <strong>{u.sectorAnterior?.nombre || '—'}</strong>
-                    <span style={{ margin: '0 8px', color:'#9E9CBB' }}>→</span>
+                    <span aria-hidden="true" style={{ margin: '0 8px', color:'#5C6B7A' }}>→</span>
                     <strong>{u.sectorNuevo?.nombre || '—'}</strong>
                   </div>
-                  <div style={{ fontSize:12, color:'#6B7C8C', marginTop:6 }}>
+                  <div style={{ fontSize:12, color:'#5C6B7A', marginTop:6 }}>
                     🏥 {u.servicio?.nombre || '—'} · 👤 {u.usuario?.nombre || '—'}
                   </div>
                 </div>
@@ -726,7 +791,6 @@ function Ubicaciones() {
         </div>
       )}
 
-      {}
       <style>{`
         @keyframes slideIn {
           from { opacity: 0; transform: translateY(-20px) scale(0.98); }
@@ -811,7 +875,7 @@ function Ubicaciones() {
         }
 
         .react-datepicker__day--outside-month {
-          color: #C5CBD3;
+          color: #8A94A0;
         }
 
         .react-datepicker__triangle {
@@ -859,11 +923,11 @@ const inpStyle = {
   transition: 'all 0.15s', outline: 'none', fontFamily: 'inherit'
 };
 const errStyle = {
-  display: 'block', color: '#E85A6D', fontSize: 11,
+  display: 'block', color: '#B93B1B', fontSize: 11,
   marginTop: 6, fontWeight: 500
 };
 const btnGhost = {
-  background:'white', color:'#6B7C8C', border:'1px solid #E5EDF3',
+  background:'white', color:'#5C6B7A', border:'1px solid #E5EDF3',
   padding:'10px 18px', borderRadius:8, fontSize:13, fontWeight:600, cursor:'pointer'
 };
 const btnSave = {
