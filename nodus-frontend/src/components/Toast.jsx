@@ -3,7 +3,7 @@ import { createContext, useCallback, useContext, useMemo, useRef, useState } fro
 const TIPOS = {
   success: { color: '#0F6E56', fondo: '#E1F5EE', icono: '✓', duracion: 6000 },
   info:    { color: '#0C447C', fondo: '#E6F1FB', icono: 'i', duracion: 6000 },
-  warning: { color: '#A37715', fondo: '#FAEEDA', icono: '⚠', duracion: 6000 },
+  warning: { color: '#7A4A00', fondo: '#FAEEDA', icono: '⚠', duracion: 6000 },
   error:   { color: '#A32D2D', fondo: '#FCEBEB', icono: '✕', duracion: 8000 }
 };
 
@@ -70,6 +70,9 @@ function ToastItem({ toast, onCerrar, onEliminar }) {
       className={`nodus-toast${toast.saliendo ? ' nodus-toast--salida' : ''}`}
       onMouseEnter={() => setPausado(true)}
       onMouseLeave={() => setPausado(false)}
+      onFocus={() => setPausado(true)}
+      onBlur={() => setPausado(false)}
+      role={toast.tipo === 'error' ? 'alert' : undefined}
       onAnimationEnd={(e) => {
         if (toast.saliendo && e.animationName.startsWith('nodusToastSalida')) onEliminar(toast.id);
       }}
@@ -95,7 +98,7 @@ function ToastItem({ toast, onCerrar, onEliminar }) {
       <div style={{ flex: 1, minWidth: 0, paddingTop: 3 }}>
         <div style={{ fontSize: 14, fontWeight: 700, color: '#1a1a1a', lineHeight: 1.3 }}>{toast.titulo}</div>
         {toast.mensaje && (
-          <div style={{ fontSize: 13, color: '#6B7C8C', lineHeight: 1.45, marginTop: 3, overflowWrap: 'anywhere' }}>
+          <div style={{ fontSize: 13, color: '#5C6B7A', lineHeight: 1.45, marginTop: 3, overflowWrap: 'anywhere' }}>
             {toast.mensaje}
           </div>
         )}
@@ -107,9 +110,9 @@ function ToastItem({ toast, onCerrar, onEliminar }) {
         aria-label="Cerrar notificación"
         className="nodus-toast__cerrar"
         style={{
-          flexShrink: 0, width: 26, height: 26, marginTop: 1,
+          flexShrink: 0, width: 28, height: 28, marginTop: 0,
           border: 'none', borderRadius: 8, background: 'transparent',
-          color: '#9E9CBB', fontSize: 18, lineHeight: 1, cursor: 'pointer'
+          color: '#5C6B7A', fontSize: 18, lineHeight: 1, cursor: 'pointer'
         }}
       >×</button>
 

@@ -127,7 +127,7 @@ function FichaQREquipo({ idEquipo, auth, onLogout }) {
     return (
       <div style={contenedor}>
         {barraSuperior}
-        <div style={{ textAlign: 'center', padding: 60, color: '#9E9CBB' }}>Cargando ficha del equipo...</div>
+        <div role="status" style={{ textAlign: 'center', padding: 60, color: '#5C6B7A' }}>Cargando ficha del equipo...</div>
       </div>
     );
   }
@@ -138,7 +138,7 @@ function FichaQREquipo({ idEquipo, auth, onLogout }) {
         {barraSuperior}
         <div style={{ ...cardStyle, textAlign: 'center', marginTop: 24, padding: '28px 20px' }}>
           <div style={{ fontSize: 17, fontWeight: 700, color: '#712B13', marginBottom: 8 }}>Equipo no encontrado</div>
-          <div style={{ fontSize: 13.5, color: '#6B7C8C', lineHeight: 1.5, marginBottom: 20 }}>
+          <div style={{ fontSize: 13.5, color: '#5C6B7A', lineHeight: 1.5, marginBottom: 20 }}>
             El código QR no corresponde a ningún equipo registrado. Verificá que sea el QR pegado en el equipo.
           </div>
           {}
@@ -175,7 +175,7 @@ function FichaQREquipo({ idEquipo, auth, onLogout }) {
           display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28
         }}>+</div>
         <h2 style={{ fontSize: 18, fontWeight: 700, color: '#1a1a1a', margin: 0, overflowWrap: 'anywhere' }}>{ficha.nombre}</h2>
-        <div style={{ fontSize: 13, color: '#9E9CBB', fontFamily: 'monospace', marginTop: 2 }}>S/N {ficha.nroSerie}</div>
+        <div style={{ fontSize: 13, color: '#5C6B7A', fontFamily: 'monospace', marginTop: 2 }}>S/N {ficha.nroSerie}</div>
         <span style={{
           display: 'inline-block', marginTop: 10, padding: '5px 14px', borderRadius: 999,
           background: ce.bg, color: ce.fg, fontSize: 12, fontWeight: 600
@@ -196,7 +196,7 @@ function FichaQREquipo({ idEquipo, auth, onLogout }) {
       {puedeReportar && (
         <div style={cardStyle}>
           <div style={{ ...tituloCard, marginBottom: 2, letterSpacing: 0.4 }}>REPORTAR FALLA</div>
-          <div style={{ fontSize: 12, color: '#9E9CBB', marginBottom: 14 }}>Todos los campos son obligatorios</div>
+          <div style={{ fontSize: 12, color: '#5C6B7A', marginBottom: 14 }}>Todos los campos son obligatorios</div>
 
           {aviso && (
             <div role="alert" style={{
@@ -223,20 +223,20 @@ function FichaQREquipo({ idEquipo, auth, onLogout }) {
                 <input
                   type="text" value={form.nombreCompleto} maxLength={MAX.nombreCompleto}
                   onChange={e => cambiar('nombreCompleto', e.target.value)}
-                  disabled={!!aviso} autoComplete="name" style={inputStyle(errores.nombreCompleto)}
+                  disabled={!!aviso} autoComplete="name" aria-invalid={!!errores.nombreCompleto} style={inputStyle(errores.nombreCompleto)}
                 />
               </Campo>
               <Campo label="Legajo / matrícula" error={errores.legajo}>
                 <input
                   type="text" value={form.legajo} maxLength={MAX.legajo}
                   onChange={e => cambiar('legajo', e.target.value)}
-                  disabled={!!aviso} style={inputStyle(errores.legajo)}
+                  disabled={!!aviso} aria-invalid={!!errores.legajo} style={inputStyle(errores.legajo)}
                 />
               </Campo>
               <Campo label="Servicio" error={errores.servicioId}>
                 <select
                   value={form.servicioId} onChange={e => cambiar('servicioId', e.target.value)}
-                  disabled={!!aviso || !servicios?.length}
+                  disabled={!!aviso || !servicios?.length} aria-invalid={!!errores.servicioId}
                   style={{ ...inputStyle(errores.servicioId), ...selectStyle }}
                 >
                   <option value="">{servicios === null && !errorServicios ? 'Cargando servicios...' : 'Seleccionar...'}</option>
@@ -258,7 +258,7 @@ function FichaQREquipo({ idEquipo, auth, onLogout }) {
                 <textarea
                   value={form.descripcion} maxLength={MAX.descripcion} rows={4}
                   onChange={e => cambiar('descripcion', e.target.value)}
-                  disabled={!!aviso} style={{ ...inputStyle(errores.descripcion), resize: 'vertical', minHeight: 96 }}
+                  disabled={!!aviso} aria-invalid={!!errores.descripcion} style={{ ...inputStyle(errores.descripcion), resize: 'vertical', minHeight: 96 }}
                 />
               </Campo>
               <button type="submit" disabled={enviando || !!aviso || sinServicios}
@@ -285,7 +285,7 @@ function FilaDato({ label, valor, ultima }) {
       display: 'flex', justifyContent: 'space-between', gap: 12, padding: '7px 0',
       borderBottom: ultima ? 'none' : '1px solid #F8FAFC', fontSize: 13
     }}>
-      <span style={{ color: '#9E9CBB', flexShrink: 0 }}>{label}</span>
+      <span style={{ color: '#5C6B7A', flexShrink: 0 }}>{label}</span>
       <span style={{ color: '#1a1a1a', fontWeight: 500, textAlign: 'right', overflowWrap: 'anywhere' }}>{valor || '-'}</span>
     </div>
   );
@@ -295,11 +295,11 @@ function Campo({ label, error, ayuda, children }) {
   return (
     <label style={{ display: 'block', marginBottom: 12 }}>
       <span style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, fontWeight: 600, color: '#4A5868', marginBottom: 5 }}>
-        <span>{label} <span style={{ color: '#D14343' }}>*</span></span>
-        {ayuda && <span style={{ fontWeight: 400, color: '#9E9CBB' }}>{ayuda}</span>}
+        <span>{label} <span style={{ color: '#B93B1B' }} aria-hidden="true">*</span></span>
+        {ayuda && <span style={{ fontWeight: 400, color: '#5C6B7A' }}>{ayuda}</span>}
       </span>
       {children}
-      {error && <span style={{ display: 'block', fontSize: 12, color: '#A32D2D', marginTop: 4 }}>⚠ {error}</span>}
+      {error && <span role="alert" style={{ display: 'block', fontSize: 12, color: '#A32D2D', marginTop: 4 }}>⚠ {error}</span>}
     </label>
   );
 }
@@ -326,21 +326,21 @@ const tituloCard = { fontSize: 13, fontWeight: 700, color: '#1a1a1a', marginBott
 
 const inputStyle = (error) => ({
   width: '100%', boxSizing: 'border-box', padding: '10px 12px', borderRadius: 10, fontSize: 16,
-  border: `1px solid ${error ? '#E8A5A5' : '#E5EDF3'}`, background: 'white', color: '#1a1a1a',
+  border: `1px solid ${error ? '#B93B1B' : '#8493A2'}`, background: 'white', color: '#1a1a1a',
   fontFamily: 'inherit', outline: 'none'
 });
 
 const selectStyle = {
   appearance: 'none', WebkitAppearance: 'none', paddingRight: 36, cursor: 'pointer',
-  backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2 4l4 4 4-4' fill='none' stroke='%236B7C8C' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E\")",
+  backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2 4l4 4 4-4' fill='none' stroke='%235C6B7A' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E\")",
   backgroundRepeat: 'no-repeat', backgroundPosition: 'right 12px center'
 };
 const btnGhost = {
-  background: 'white', color: '#6B7C8C', border: '1px solid #E5EDF3',
+  background: 'white', color: '#5C6B7A', border: '1px solid #8493A2',
   padding: '12px 18px', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer', width: '100%'
 };
 const btnSave = {
-  background: 'linear-gradient(135deg, #2C7DA0 0%, #4A9BB8 100%)',
+  background: 'linear-gradient(135deg, #1B6585 0%, #1F6E8F 100%)',
   color: 'white', border: 'none', padding: '12px 18px', borderRadius: 10,
   fontSize: 13, fontWeight: 600, cursor: 'pointer', width: '100%'
 };

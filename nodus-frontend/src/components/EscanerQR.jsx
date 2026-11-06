@@ -149,22 +149,22 @@ export default function EscanerQR({ onDetectado, onCancelar }) {
       <div style={caja}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
           <div style={{ fontSize: 15, fontWeight: 700, color: '#1a1a1a' }}>Escanear QR del equipo</div>
-          <button type="button" onClick={onCancelar} aria-label="Cerrar" style={btnIcono}>
-            <IconX size={18} stroke={2} />
+          <button type="button" onClick={onCancelar} aria-label="Cerrar escáner" autoFocus style={btnIcono}>
+            <IconX size={18} stroke={2} aria-hidden="true" />
           </button>
         </div>
 
         {info ? (
-          <div style={{ textAlign: 'center', padding: '20px 4px 8px' }}>
+          <div role="alert" style={{ textAlign: 'center', padding: '20px 4px 8px' }}>
             <div style={{
               width: 52, height: 52, borderRadius: '50%', background: '#FCEBEB', color: '#A32D2D',
               display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 14px'
             }}>
-              <info.icono size={26} stroke={1.8} />
+              <info.icono size={26} stroke={1.8} aria-hidden="true" />
             </div>
             <div style={{ fontSize: 15, fontWeight: 700, color: '#712B13', marginBottom: 6, lineHeight: 1.35 }}>{info.titulo}</div>
-            <div style={{ fontSize: 13, color: '#6B7C8C', lineHeight: 1.45, marginBottom: 6 }}>{info.detalle}</div>
-            <div style={{ fontSize: 13, color: '#6B7C8C', lineHeight: 1.45 }}>
+            <div style={{ fontSize: 13, color: '#5C6B7A', lineHeight: 1.45, marginBottom: 6 }}>{info.detalle}</div>
+            <div style={{ fontSize: 13, color: '#5C6B7A', lineHeight: 1.45 }}>
               También podés buscar el equipo por su número de serie o ID.
             </div>
           </div>
@@ -173,15 +173,15 @@ export default function EscanerQR({ onDetectado, onCancelar }) {
             <div style={{ position: 'relative', borderRadius: 12, overflow: 'hidden', background: '#0F1720', minHeight: 260 }}>
               <div id={ID_VISOR} style={{ width: '100%' }} />
               {iniciando && (
-                <div style={{
+                <div role="status" style={{
                   position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  color: '#C9D4DE', fontSize: 13, textAlign: 'center', padding: 20
+                  color: '#E3EAF0', fontSize: 13, textAlign: 'center', padding: 20
                 }}>
                   Iniciando cámara... Si el navegador lo pide, permití el acceso.
                 </div>
               )}
             </div>
-            <div style={{ fontSize: 13, color: '#6B7C8C', textAlign: 'center', marginTop: 12, lineHeight: 1.45 }}>
+            <div style={{ fontSize: 13, color: '#5C6B7A', textAlign: 'center', marginTop: 12, lineHeight: 1.45 }}>
               Apuntá al código QR pegado en el equipo. Se lee solo, no hace falta sacar foto.
             </div>
           </>
@@ -208,15 +208,15 @@ const caja = {
   boxShadow: '0 12px 32px rgba(16, 24, 40, 0.2)'
 };
 const btnIcono = {
-  width: 34, height: 34, border: 'none', borderRadius: 8, background: '#F4F7FA', color: '#6B7C8C',
+  width: 40, height: 40, border: 'none', borderRadius: 8, background: '#EAF0F5', color: '#3F4D5B',
   display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer'
 };
 const btnGhost = {
-  background: 'white', color: '#6B7C8C', border: '1px solid #E5EDF3',
+  background: 'white', color: '#5C6B7A', border: '1px solid #8493A2',
   padding: '12px 18px', borderRadius: 10, fontSize: 14, fontWeight: 600, cursor: 'pointer', flex: 1
 };
 const btnPrimario = {
-  background: 'linear-gradient(135deg, #2C7DA0 0%, #4A9BB8 100%)',
+  background: 'linear-gradient(135deg, #1B6585 0%, #1F6E8F 100%)',
   color: 'white', border: 'none', padding: '12px 18px', borderRadius: 10,
   fontSize: 14, fontWeight: 600, cursor: 'pointer', flex: 1
 };

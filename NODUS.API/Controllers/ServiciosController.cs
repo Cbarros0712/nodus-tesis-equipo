@@ -12,6 +12,12 @@ namespace NODUS.API.Controllers
     [Route("api/[controller]")]
     public class ServiciosController : ControllerBase
     {
+        private const int MAX_NOMBRE = 100;
+        private const int MAX_SECTOR = 100;
+
+        private const string MSJ_NO_GUARDADO =
+            "No se pudo guardar el servicio. Revisá los datos e intentá de nuevo.";
+
         private readonly NodusDbContext _db;
 
         public ServiciosController(NodusDbContext db)
@@ -50,24 +56,40 @@ namespace NODUS.API.Controllers
         }
 
         [HttpPost]
-        public async Task<ActionResult<Servicio>> PostServicio(Servicio servicio)
+        public async Task<ActionResult<Servicio>> PostServicio(Servicio entrada)
         {
-            if (string.IsNullOrWhiteSpace(servicio.Nombre))
-                return BadRequest("El nombre del servicio es obligatorio.");
+            var error = await ValidarServicio(entrada, null);
+            if (error != null) return BadRequest(error);
+
+            // Se copian solo los campos conocidos: así no se pueden colar OTs, traslados u otros objetos anidados.
+            var servicio = new Servicio
+            {
+                Nombre = entrada.Nombre,
+                Sector = entrada.Sector
+            };
 
             _db.Servicios.Add(servicio);
-            await _db.SaveChangesAsync();
+            try { await _db.SaveChangesAsync(); }
+            catch (DbUpdateException) { return BadRequest(MSJ_NO_GUARDADO); }
 
             return CreatedAtAction(nameof(GetServicio), new { id = servicio.IdServicio }, servicio);
         }
 
         [HttpPut("{id}")]
-        public async Task<IActionResult> PutServicio(int id, Servicio servicio)
+        public async Task<IActionResult> PutServicio(int id, Servicio entrada)
         {
-            if (id != servicio.IdServicio)
+            if (id != entrada.IdServicio)
                 return BadRequest();
 
-            _db.Entry(servicio).State = EntityState.Modified;
+            var servicio = await _db.Servicios.FindAsync(id);
+            if (servicio == null)
+                return NotFound();
+
+            var error = await ValidarServicio(entrada, id);
+            if (error != null) return BadRequest(error);
+
+            servicio.Nombre = entrada.Nombre;
+            servicio.Sector = entrada.Sector;
 
             try
             {
@@ -78,6 +100,10 @@ namespace NODUS.API.Controllers
                 if (!await _db.Servicios.AnyAsync(s => s.IdServicio == id))
                     return NotFound();
                 throw;
+            }
+            catch (DbUpdateException)
+            {
+                return BadRequest(MSJ_NO_GUARDADO);
             }
 
             return NoContent();
@@ -91,14 +117,50 @@ namespace NODUS.API.Controllers
                 return NotFound();
 
             var enUso = await _db.OrdenesTrabajo.AnyAsync(o => o.IdServicio == id)
-                     || await _db.Ubicaciones.AnyAsync(u => u.IdServicio == id);
+                     || await _db.Ubicaciones.AnyAsync(u => u.IdServicio == id)
+                     || await _db.ReportesFalla.AnyAsync(r => r.IdServicio == id);
 
             if (enUso)
-                return BadRequest("No se puede eliminar: el servicio está referenciado en órdenes de trabajo o traslados.");
+                return BadRequest("No se puede eliminar: el servicio está referenciado en órdenes de trabajo, traslados o reportes de falla.");
 
             _db.Servicios.Remove(servicio);
-            await _db.SaveChangesAsync();
+            try { await _db.SaveChangesAsync(); }
+            catch (DbUpdateException)
+            {
+                return BadRequest("No se puede eliminar el servicio porque tiene registros asociados.");
+            }
             return NoContent();
+        }
+
+        private static string? Limpiar(string? texto)
+        {
+            var t = texto?.Trim();
+            return string.IsNullOrEmpty(t) ? null : t;
+        }
+
+        // Valida y normaliza (recorta espacios, vacío = sin dato). idActual es null al crear.
+        private async Task<string?> ValidarServicio(Servicio s, int? idActual)
+        {
+            s.Nombre = (s.Nombre ?? string.Empty).Trim();
+            s.Sector = Limpiar(s.Sector);
+
+            if (s.Nombre.Length == 0)
+                return "El nombre del servicio es obligatorio.";
+            if (s.Nombre.Length > MAX_NOMBRE)
+                return $"El nombre no puede superar los {MAX_NOMBRE} caracteres.";
+            if (s.Sector != null && s.Sector.Length > MAX_SECTOR)
+                return $"El sector no puede superar los {MAX_SECTOR} caracteres.";
+
+            var nombre = s.Nombre.ToLower();
+            var sector = (s.Sector ?? string.Empty).ToLower();
+            var duplicado = await _db.Servicios.AnyAsync(x =>
+                x.Nombre.Trim().ToLower() == nombre &&
+                (x.Sector ?? "").Trim().ToLower() == sector &&
+                (idActual == null || x.IdServicio != idActual));
+            if (duplicado)
+                return "Ya existe un servicio con ese nombre en ese sector.";
+
+            return null;
         }
     }
 }

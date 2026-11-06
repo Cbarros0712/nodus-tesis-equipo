@@ -56,6 +56,11 @@ builder.Services.AddHttpClient<GeocodingService>(client =>
     client.Timeout = TimeSpan.FromSeconds(15);
 });
 
+var claveJwt = builder.Configuration["Jwt:Key"];
+if (string.IsNullOrWhiteSpace(claveJwt) || Encoding.UTF8.GetByteCount(claveJwt) < 32)
+    throw new InvalidOperationException(
+        "Falta configurar 'Jwt:Key' o es demasiado corta. Usá una clave de al menos 32 caracteres (variable de entorno Jwt__Key).");
+
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
@@ -65,10 +70,11 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ValidateAudience = true,
             ValidateLifetime = true,
             ValidateIssuerSigningKey = true,
+            ClockSkew = TimeSpan.FromMinutes(1),
             ValidIssuer = builder.Configuration["Jwt:Issuer"],
             ValidAudience = builder.Configuration["Jwt:Audience"],
             IssuerSigningKey = new SymmetricSecurityKey(
-                Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Key"]!))
+                Encoding.UTF8.GetBytes(claveJwt))
         };
     });
 
@@ -88,7 +94,24 @@ builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
     options.OnRejected = (ctx, _) =>
-        new ValueTask(ctx.HttpContext.Response.WriteAsync("Enviaste demasiados reportes. Esperá unos minutos y volvé a intentar."));
+    {
+        ctx.HttpContext.Response.ContentType = "text/plain; charset=utf-8";
+        var esLogin = ctx.HttpContext.Request.Path.StartsWithSegments("/api/auth", StringComparison.OrdinalIgnoreCase);
+        return new ValueTask(ctx.HttpContext.Response.WriteAsync(esLogin
+            ? "Demasiados intentos de inicio de sesión. Esperá unos minutos y volvé a intentar."
+            : "Enviaste demasiados reportes. Esperá unos minutos y volvé a intentar."));
+    };
+
+    // Freno a la fuerza bruta sobre el login: 8 intentos cada 5 minutos por dirección IP.
+    options.AddPolicy("Login", http =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            http.Connection.RemoteIpAddress?.ToString() ?? "anonimo",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 8,
+                Window = TimeSpan.FromMinutes(5),
+                QueueLimit = 0
+            }));
 
     options.AddPolicy(LimitesTasa.ReportesFalla, http =>
         RateLimitPartition.GetFixedWindowLimiter(
@@ -101,16 +124,21 @@ builder.Services.AddRateLimiter(options =>
             }));
 });
 
+var origenesConfigurados = builder.Configuration.GetSection("Cors:Origenes").Get<string[]>() ?? Array.Empty<string>();
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("ReactApp", policy =>
     {
+        // Si se configura Cors:Origenes (variable Cors__Origenes__0, Cors__Origenes__1...), solo esos orígenes
+        // (más localhost) pueden usar la API. Sin configuración se mantiene el comportamiento anterior.
         policy.SetIsOriginAllowed(origin =>
                 origin == "http://localhost:3000" ||
                 origin == "http://localhost:5173" ||
                 origin == "http://localhost:5174" ||
-                origin.EndsWith(".devtunnels.ms") ||
-                origin.EndsWith(".vercel.app"))
+                origenesConfigurados.Contains(origin, StringComparer.OrdinalIgnoreCase) ||
+                (origenesConfigurados.Length == 0 &&
+                    (origin.EndsWith(".devtunnels.ms") || origin.EndsWith(".vercel.app"))))
               .AllowAnyHeader()
               .AllowAnyMethod()
               .AllowCredentials();
@@ -137,6 +165,19 @@ for (var intento = 1; ; intento++)
     }
 }
 
+if (!app.Environment.IsDevelopment())
+{
+    app.UseExceptionHandler(errores => errores.Run(async contexto =>
+    {
+        var detalle = contexto.Features.Get<Microsoft.AspNetCore.Diagnostics.IExceptionHandlerFeature>();
+        if (detalle?.Error != null)
+            app.Logger.LogError(detalle.Error, "Error no controlado en {Metodo} {Ruta}", contexto.Request.Method, contexto.Request.Path);
+        contexto.Response.StatusCode = StatusCodes.Status500InternalServerError;
+        contexto.Response.ContentType = "text/plain; charset=utf-8";
+        await contexto.Response.WriteAsync("Ocurrió un error inesperado. Intentá de nuevo en unos minutos.");
+    }));
+}
+
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
@@ -153,11 +194,26 @@ string[] documentosSinToken =
     "api/Prestamos/{id}/remito", "api/Prestamos/{id}/remito-devolucion",
     "api/Remitos/{id}/firma-salida", "api/Remitos/{id}/firma-devolucion"
 };
+string[] metodosDeEscritura = { "POST", "PUT", "PATCH", "DELETE" };
+
 app.MapControllers().Add(endpoint =>
 {
-    if (endpoint is RouteEndpointBuilder ruta
-        && documentosSinToken.Contains(ruta.RoutePattern.RawText, StringComparer.OrdinalIgnoreCase))
+    if (endpoint is not RouteEndpointBuilder ruta) return;
+
+    if (documentosSinToken.Contains(ruta.RoutePattern.RawText, StringComparer.OrdinalIgnoreCase))
+    {
         endpoint.Metadata.Add(new AllowAnonymousAttribute());
+        return;
+    }
+
+    var metodos = ruta.Metadata.OfType<HttpMethodMetadata>().FirstOrDefault()?.HttpMethods;
+    var esEscritura = metodos != null
+        && metodos.Any(m => metodosDeEscritura.Contains(m, StringComparer.OrdinalIgnoreCase));
+    var tieneReglaPropia = ruta.Metadata.OfType<IAuthorizeData>().Any()
+        || ruta.Metadata.OfType<IAllowAnonymous>().Any();
+
+    if (esEscritura && !tieneReglaPropia)
+        ruta.Metadata.Add(new AuthorizeAttribute { Roles = Roles.Bioingeniero });
 });
 app.Run();
 

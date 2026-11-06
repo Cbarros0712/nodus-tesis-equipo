@@ -12,7 +12,7 @@ body { font-family: 'Segoe UI', sans-serif; background: #F4F7FA; color: #2D3748;
 }
 .login-logo { width: 80px; height: 80px; object-fit: contain; margin-bottom: 12px; }
 .login-title { font-size: 2rem; color: #2C7DA0; margin-bottom: 4px; }
-.login-subtitle { font-size: 0.85rem; color: #6B7C8C; margin-bottom: 28px; }
+.login-subtitle { font-size: 0.85rem; color: #5C6B7A; margin-bottom: 28px; }
 .login-card .form-group { text-align: left; margin-bottom: 14px; }
 .login-card .form-group label { display: block; margin-bottom: 4px; }
 .login-card .form-group input { width: 100%; }
@@ -23,7 +23,7 @@ body { font-family: 'Segoe UI', sans-serif; background: #F4F7FA; color: #2D3748;
 .login-btn { width: 100%; padding: 10px; font-size: 0.95rem; margin-top: 4px; }
 .login-footer {
   margin-top: 24px; padding-top: 16px; border-top: 1px solid #D6E2EC;
-  display: flex; flex-direction: column; gap: 2px; font-size: 0.72rem; color: #6B7C8C;
+  display: flex; flex-direction: column; gap: 2px; font-size: 0.72rem; color: #5C6B7A;
 }
 
 .app { display: flex; min-height: 100vh; }
@@ -40,9 +40,9 @@ body { font-family: 'Segoe UI', sans-serif; background: #F4F7FA; color: #2D3748;
 .topbar h2 { font-size: 1rem; color: #2D3748; }
 .badge {
   font-size: 0.65rem; padding: 2px 8px; border-radius: 4px;
-  background: rgba(82, 183, 136, 0.15); color: #2F8059; border: 1px solid rgba(82, 183, 136, 0.35);
+  background: rgba(82, 183, 136, 0.15); color: #1F6B47; border: 1px solid rgba(82, 183, 136, 0.45);
 }
-.desc { font-size: 0.8rem; color: #6B7C8C; margin-left: auto; }
+.desc { font-size: 0.8rem; color: #5C6B7A; margin-left: auto; }
 
 .page-content {
   padding: 20px 24px; flex: 1;
@@ -92,7 +92,7 @@ body { font-family: 'Segoe UI', sans-serif; background: #F4F7FA; color: #2D3748;
   box-shadow: 0 1px 3px rgba(44, 125, 160, 0.05);
 }
 .table-card table { min-width: 1000px; }
-.table-header { padding: 10px 16px; font-size: 0.78rem; color: #6B7C8C; }
+.table-header { padding: 10px 16px; font-size: 0.78rem; color: #5C6B7A; }
 table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
 thead th {
   background: #F0F6FA; padding: 9px 12px; text-align: left;
@@ -105,12 +105,13 @@ tbody tr:hover { background: #F7FAFC; }
 tbody td { padding: 9px 12px; color: #2D3748; }
 .table-card th, .table-card td { white-space: nowrap; }
 .table-card td.wrap-cell { white-space: normal; max-width: 280px; }
-.td-id { color: #C77800; font-family: monospace; font-size: 0.8rem; }
+.td-id { color: #8A4B00; font-family: monospace; font-size: 0.8rem; }
 .td-mono { font-family: monospace; font-size: 0.78rem; color: #4A5868; }
-.empty { text-align: center; color: #6B7C8C; padding: 32px !important; }
+.empty { text-align: center; color: #5C6B7A; padding: 32px !important; }
 .btn-edit, .btn-delete {
   background: none; border: 1px solid #C9D6E2; color: #4A5868;
   padding: 4px 8px; border-radius: 4px; cursor: pointer; margin-right: 4px; font-size: 0.78rem;
+  min-height: 28px; min-width: 32px;
 }
 .btn-edit:hover { background: #F0F6FA; color: #2C7DA0; border-color: #2C7DA0; }
 .btn-delete:hover { background: rgba(230, 57, 70, 0.08); color: #C53030; border-color: rgba(230, 57, 70, 0.3); }
@@ -131,20 +132,20 @@ tbody td { padding: 9px 12px; color: #2D3748; }
   margin: 8px 0 14px; font-size: 0.8rem;
 }
 .checkbox-label {
-  display: flex; align-items: center; gap: 6px; color: #9E9CBB; cursor: pointer;
+  display: flex; align-items: center; gap: 6px; color: #4A5868; cursor: pointer;
 }
 .checkbox-label input[type="checkbox"] {
-  width: 14px; height: 14px; accent-color: #7C6EFA; cursor: pointer;
+  width: 14px; height: 14px; accent-color: #4B3FBF; cursor: pointer;
 }
 .checkbox-label span { font-size: 0.8rem; }
 .btn-link {
-  background: none; border: none; color: #7C6EFA; cursor: pointer;
+  background: none; border: none; color: #4B3FBF; cursor: pointer;
   font-size: 0.8rem; padding: 0; text-decoration: none; margin-top: 16px; display: block; text-align: center;
 }
-.btn-link:hover { color: #A89BFF; text-decoration: underline; }
+.btn-link:hover { color: #3C3489; text-decoration: underline; }
 .login-success {
   background: rgba(45,212,160,0.1); border: 1px solid rgba(45,212,160,0.3);
-  color: #2DD4A0; padding: 8px 12px; border-radius: 6px; font-size: 0.82rem; margin-bottom: 12px;
+  color: #0B5A46; padding: 8px 12px; border-radius: 6px; font-size: 0.82rem; margin-bottom: 12px;
 }
 
 .sidebar-nodus {
@@ -201,7 +202,7 @@ tbody td { padding: 9px 12px; color: #2D3748; }
 
 .sn-logo-sub {
   font-size: 10px;
-  opacity: 0.7;
+  opacity: 0.95;
   letter-spacing: 0.3px;
   color: white;
 }
@@ -229,7 +230,7 @@ tbody td { padding: 9px 12px; color: #2D3748; }
   align-items: center;
   gap: 8px;
   padding: 10px 12px 6px;
-  opacity: 0.65;
+  opacity: 1;
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 1px;
@@ -250,7 +251,7 @@ tbody td { padding: 9px 12px; color: #2D3748; }
   border-radius: 7px;
   margin: 2px 0;
   cursor: pointer;
-  color: rgba(255, 255, 255, 0.88);
+  color: #FFFFFF;
   text-decoration: none;
   font-size: 13px;
   font-weight: 400;
@@ -263,9 +264,10 @@ tbody td { padding: 9px 12px; color: #2D3748; }
 }
 
 .sn-item.active {
-  background: rgba(255, 255, 255, 0.18);
+  background: rgba(0, 0, 0, 0.22);
+  box-shadow: inset 3px 0 0 #FFFFFF;
   color: white;
-  font-weight: 500;
+  font-weight: 600;
 }
 
 .sn-item span {
@@ -278,7 +280,7 @@ tbody td { padding: 9px 12px; color: #2D3748; }
   padding: 1px 6px;
   border-radius: 999px;
   background: #F2A541;
-  color: white;
+  color: #3D2400;
   font-size: 11px;
   font-weight: 700;
   line-height: 16px;
@@ -304,8 +306,8 @@ tbody td { padding: 9px 12px; color: #2D3748; }
   align-items: center;
   justify-content: center;
   font-size: 13px;
-  font-weight: 600;
-  color: white;
+  font-weight: 700;
+  color: #3D1F00;
   flex-shrink: 0;
 }
 
@@ -325,8 +327,8 @@ tbody td { padding: 9px 12px; color: #2D3748; }
 }
 
 .sn-user-role {
-  opacity: 0.7;
-  font-size: 10px;
+  opacity: 1;
+  font-size: 11px;
   color: white;
 }
 
@@ -334,7 +336,7 @@ tbody td { padding: 9px 12px; color: #2D3748; }
   background: transparent;
   border: none;
   color: white;
-  opacity: 0.9;
+  opacity: 1;
   cursor: pointer;
   padding: 4px;
   display: flex;
@@ -486,7 +488,7 @@ tbody td { padding: 9px 12px; color: #2D3748; }
 .rf-busqueda { position: relative; flex: 1 1 320px; min-width: 0; }
 .rf-lupa {
   position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
-  color: #9E9CBB; font-size: 14px; pointer-events: none;
+  color: #5C6B7A; font-size: 14px; pointer-events: none;
 }
 .rf-busqueda input, .rf-select {
   width: 100%; padding: 10px 12px; border: 1.5px solid #E5EDF3; border-radius: 8px;
@@ -499,7 +501,7 @@ tbody td { padding: 9px 12px; color: #2D3748; }
 }
 .rf-limpiar {
   position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
-  background: transparent; border: none; color: #9E9CBB; font-size: 18px; line-height: 1;
+  background: transparent; border: none; color: #5C6B7A; font-size: 18px; line-height: 1;
   cursor: pointer; padding: 4px 8px; border-radius: 6px;
 }
 .rf-limpiar:hover { color: #2C7DA0; background: #F0F6FA; }
@@ -507,14 +509,53 @@ tbody td { padding: 9px 12px; color: #2D3748; }
 .rf-select {
   width: 210px; cursor: pointer; padding-right: 34px;
   appearance: none; -webkit-appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2 4l4 4 4-4' fill='none' stroke='%236B7C8C' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2 4l4 4 4-4' fill='none' stroke='%235C6B7A' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   background-repeat: no-repeat; background-position: right 12px center;
 }
 .rf-select option { background: #FFFFFF; }
 .rf-actualizar { width: 40px; height: 40px; padding: 0; font-size: 18px; border-radius: 8px; flex-shrink: 0; }
-.table-card th.rf-nro, .table-card td.rf-nro { width: 48px; text-align: center; color: #6B7C8C; }
+.table-card th.rf-nro, .table-card td.rf-nro { width: 48px; text-align: center; color: #5C6B7A; }
 @media (max-width: 768px) {
   .rf-busqueda { flex-basis: 100%; }
   .rf-acciones { width: 100%; }
   .rf-select { flex: 1; width: auto; }
+}
+
+/* Accesibilidad: foco visible al navegar con teclado */
+button:focus-visible,
+a:focus-visible,
+[role="button"]:focus-visible,
+input[type="checkbox"]:focus-visible {
+  outline: 3px solid #1F6E8F;
+  outline-offset: 2px;
+}
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid #1F6E8F !important;
+  outline-offset: 1px;
+}
+.sidebar-nodus button:focus-visible,
+.sidebar-nodus a:focus-visible,
+.sidebar-nodus [role="button"]:focus-visible,
+.sn-hamburger:focus-visible {
+  outline-color: #FFFFFF;
+}
+
+/* Accesibilidad: sin animaciones si el sistema lo pide */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ── Ancho completo de la aplicación ──
+   Anula restos de la plantilla de Vite (index.css), que limitan #root a un
+   ancho máximo, lo centran o le agregan relleno y dejan la página angosta. */
+html, body { width: 100%; min-height: 100vh; margin: 0; padding: 0; }
+html body { display: block; place-items: unset; min-width: 0; }
+html body #root {
+  width: 100%; max-width: none; margin: 0; padding: 0; text-align: left;
 }

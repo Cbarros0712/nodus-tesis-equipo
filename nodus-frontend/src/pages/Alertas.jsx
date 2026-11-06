@@ -1,305 +1,321 @@
 import { useState, useEffect, useMemo } from 'react';
 import api from '../api';
 import { useToast, mensajeDeError } from '../components/Toast';
+import ConfirmarDialogo from '../components/ConfirmarDialogo';
 
-const TIPOS = [
-  'Garantía por vencer',
-  'Mantenimiento preventivo',
-  'Falla recurrente',
-  'Calibración pendiente',
-  'Stock crítico',
-  'Otro'
-];
-const ESTADOS = ['No leída', 'Leída', 'Resuelta', 'Descartada'];
-
-function Alertas({ auth }) {
+function HospitalesExternos() {
   const toast = useToast();
-  const [alertas, setAlertas] = useState([]);
-  const [equipos, setEquipos] = useState([]);
-  const [usuarios, setUsuarios] = useState([]);
-
-  const [tipo, setTipo] = useState('');
-  const [fechaGeneracion, setFechaGeneracion] = useState(() => new Date().toISOString().split('T')[0]);
-  const [estado, setEstado] = useState('No leída');
-  const [idEquipo, setIdEquipo] = useState('');
-  const [idUsuario, setIdUsuario] = useState('');
+  const [hospitales, setHospitales] = useState([]);
+  const [busqueda, setBusqueda] = useState('');
+  const [modalAbierto, setModalAbierto] = useState(false);
   const [editando, setEditando] = useState(null);
+  const [errores, setErrores] = useState({});
+  const [guardando, setGuardando] = useState(false);
+  const [hospitalAEliminar, setHospitalAEliminar] = useState(null);
 
-  const [filtroEstado, setFiltroEstado] = useState('');
-  const [filtroTipo, setFiltroTipo] = useState('');
+  const [nombre, setNombre] = useState('');
+  const [localidad, setLocalidad] = useState('');
+  const [direccion, setDireccion] = useState('');
+  const [contacto, setContacto] = useState('');
+  const [telefono, setTelefono] = useState('');
+  const [email, setEmail] = useState('');
+
+  useEffect(() => { cargarHospitales(); }, []);
 
   useEffect(() => {
-    cargarAlertas();
-    cargarEquipos();
-    cargarUsuarios();
-  }, []);
+    const handleEsc = (e) => { if (e.key === 'Escape' && modalAbierto) cerrarModal(); };
+    window.addEventListener('keydown', handleEsc);
+    return () => window.removeEventListener('keydown', handleEsc);
+  }, [modalAbierto]);
 
-  const cargarAlertas  = async () => { const r = await api.get('/alertas');   setAlertas(r.data); };
-  const cargarEquipos  = async () => { const r = await api.get('/equipos');   setEquipos(r.data); };
-  const cargarUsuarios = async () => { const r = await api.get('/usuarios');  setUsuarios(r.data); };
-
-  const guardar = async () => {
-    if (!tipo || !fechaGeneracion || !idUsuario) {
-      toast.warning('Faltan datos', 'Tipo, fecha y usuario reportador son obligatorios.'); return;
-    }
-    const data = {
-      tipo,
-      fechaGeneracion,
-      estado,
-      idEquipo: idEquipo ? parseInt(idEquipo) : null,
-      idUsuario: parseInt(idUsuario)
-    };
+  const cargarHospitales = async () => {
     try {
-      if (editando) {
-        await api.put(`/alertas/${editando}`, { idAlerta: editando, ...data });
-      } else {
-        await api.post('/alertas', data);
-      }
-      limpiar();
-      cargarAlertas();
+      const r = await api.get('/hospitalesexternos');
+      setHospitales(r.data);
     } catch (err) {
-      toast.error('No se pudo guardar', mensajeDeError(err, 'Error al guardar la alerta.'));
+      toast.error('No se pudieron cargar los hospitales', mensajeDeError(err, 'Revisá la conexión e intentá de nuevo.'));
     }
   };
 
-  const editar = (a) => {
-    setTipo(a.tipo);
-    setFechaGeneracion(a.fechaGeneracion?.split('T')[0] || '');
-    setEstado(a.estado);
-    setIdEquipo(a.idEquipo || '');
-    setIdUsuario(a.idUsuario);
-    setEditando(a.idAlerta);
-  };
+  const hospitalesFiltrados = useMemo(() => {
+    const q = busqueda.trim().toLowerCase();
+    if (!q) return hospitales;
+    return hospitales.filter(h =>
+      h.nombre?.toLowerCase().includes(q) ||
+      h.localidad?.toLowerCase().includes(q)
+    );
+  }, [hospitales, busqueda]);
 
-  const eliminar = async (id) => {
-    if (!window.confirm('¿Eliminar esta alerta?')) return;
-    try {
-      await api.delete(`/alertas/${id}`);
-      cargarAlertas();
-    } catch (err) {
-      toast.error('No se pudo eliminar', mensajeDeError(err, 'Error al eliminar la alerta.'));
-    }
+  const abrirModalNuevo = () => { limpiar(); setModalAbierto(true); };
+  const abrirModalEditar = (h) => {
+    setNombre(h.nombre); setLocalidad(h.localidad || ''); setDireccion(h.direccion || '');
+    setContacto(h.contacto || ''); setTelefono(h.telefono || ''); setEmail(h.email || '');
+    setEditando(h.idHospital);
+    setErrores({});
+    setModalAbierto(true);
   };
-
-  const cambiarEstadoRapido = async (alerta, nuevoEstado) => {
-    try {
-      await api.put(`/alertas/${alerta.idAlerta}`, { ...alerta, estado: nuevoEstado });
-      cargarAlertas();
-    } catch (err) {
-      toast.error('No se pudo actualizar', mensajeDeError(err, 'Error al actualizar el estado de la alerta.'));
-    }
-  };
-
-  const generarAutomaticas = async () => {
-    if (!auth?.usuario?.idUsuario) {
-      toast.error('Usuario no identificado', 'No se pudo identificar el usuario actual.'); return;
-    }
-    if (!window.confirm('El sistema buscará equipos con garantía por vencer e insumos con stock bajo y creará alertas automáticamente. ¿Continuar?')) return;
-    try {
-      const r = await api.post(`/alertas/generar-automaticas?idUsuarioReportador=${auth.usuario.idUsuario}`);
-      toast.success('Alertas generadas', r.data.mensaje);
-      cargarAlertas();
-    } catch (err) {
-      toast.error('No se pudieron generar', mensajeDeError(err, 'Error al generar las alertas automáticas.'));
-    }
-  };
+  const cerrarModal = () => { setModalAbierto(false); limpiar(); };
 
   const limpiar = () => {
-    setTipo(''); setFechaGeneracion(new Date().toISOString().split('T')[0]);
-    setEstado('No leída'); setIdEquipo(''); setIdUsuario(''); setEditando(null);
+    setNombre(''); setLocalidad(''); setDireccion(''); setContacto(''); setTelefono(''); setEmail('');
+    setEditando(null); setErrores({});
   };
 
-  const { kpiTotal, kpiNoLeidas, kpiEnRevision, kpiResueltas, alertasFiltradas } = useMemo(() => {
-    const total = alertas.length;
-    const noLeidas = alertas.filter(a => a.estado === 'No leída').length;
-    const enRev = alertas.filter(a => a.estado === 'Leída').length;
-    const resueltas = alertas.filter(a => a.estado === 'Resuelta').length;
-    const filtradas = alertas.filter(a => {
-      const me = !filtroEstado || a.estado === filtroEstado;
-      const mt = !filtroTipo || a.tipo === filtroTipo;
-      return me && mt;
-    });
-    return { kpiTotal: total, kpiNoLeidas: noLeidas, kpiEnRevision: enRev, kpiResueltas: resueltas, alertasFiltradas: filtradas };
-  }, [alertas, filtroEstado, filtroTipo]);
+  const cambiarCampo = (campo, valor, setter) => {
+    setter(valor);
+    if (errores[campo]) {
+      setErrores(prev => { const n = { ...prev }; delete n[campo]; return n; });
+    }
+  };
 
-  const chipEstado = (estado) => {
-    const base = { padding: '3px 10px', borderRadius: 6, fontSize: 11, fontWeight: 700, border: '1px solid' };
-    const map = {
-      'No leída':   { bg: 'rgba(255,94,122,0.15)',  col: '#FF5E7A', bd: 'rgba(255,94,122,0.3)'  },
-      'Leída':      { bg: 'rgba(245,166,35,0.15)',  col: '#F5A623', bd: 'rgba(245,166,35,0.3)'  },
-      'Resuelta':   { bg: 'rgba(45,212,160,0.15)',  col: '#2DD4A0', bd: 'rgba(45,212,160,0.3)'  },
-      'Descartada': { bg: 'rgba(158,156,187,0.15)', col: '#9E9CBB', bd: 'rgba(158,156,187,0.3)' },
+  const validar = () => {
+    const errs = {};
+    if (!nombre.trim()) errs.nombre = 'Falta ingresar el nombre del hospital';
+    else if (nombre.trim().length > 150) errs.nombre = 'El nombre no puede superar los 150 caracteres';
+    if (localidad.trim().length > 100) errs.localidad = 'La localidad no puede superar los 100 caracteres';
+    if (direccion.trim().length > 200) errs.direccion = 'La dirección no puede superar los 200 caracteres';
+    if (contacto.trim().length > 100) errs.contacto = 'El contacto no puede superar los 100 caracteres';
+    if (telefono.trim() && !/^[0-9+()\-\s]{6,30}$/.test(telefono.trim()))
+      errs.telefono = 'El teléfono solo puede tener números, espacios, + ( ) y guiones';
+    if (email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()))
+      errs.email = 'El email no tiene un formato válido. Ejemplo: bioingenieria@hospital.gob.ar';
+    return errs;
+  };
+
+  const guardar = async () => {
+    if (guardando) return;
+    const errs = validar();
+    setErrores(errs);
+    if (Object.keys(errs).length > 0) return;
+
+    const data = {
+      nombre: nombre.trim(),
+      localidad: localidad.trim(),
+      direccion: direccion.trim(),
+      contacto: contacto.trim(),
+      telefono: telefono.trim(),
+      email: email.trim(),
+      activo: true
     };
-    const c = map[estado] || map['Descartada'];
-    return { ...base, background: c.bg, color: c.col, borderColor: c.bd };
+
+    setGuardando(true);
+    try {
+      if (editando) {
+        await api.put(`/hospitalesexternos/${editando}`, { idHospital: editando, ...data });
+        toast.success('Hospital actualizado', `Se guardaron los cambios de ${data.nombre}.`);
+      } else {
+        await api.post('/hospitalesexternos', data);
+        toast.success('Hospital registrado', `${data.nombre} se agregó al catálogo.`);
+      }
+      cerrarModal();
+      cargarHospitales();
+    } catch (err) {
+      const mensaje = typeof err.response?.data === 'string' ? err.response.data : 'No se pudo guardar el hospital.';
+      setErrores({ __general: mensaje });
+    } finally {
+      setGuardando(false);
+    }
   };
 
-  const iconoTipo = (tipo) => ({
-    'Garantía por vencer':     '🛡',
-    'Mantenimiento preventivo':'🔧',
-    'Falla recurrente':        '⚠',
-    'Calibración pendiente':   '📐',
-    'Stock crítico':           '📦',
-    'Otro':                    '🔔'
-  }[tipo] || '🔔');
+  const eliminar = (h) => setHospitalAEliminar(h);
+
+  const confirmarEliminar = async () => {
+    const h = hospitalAEliminar;
+    setHospitalAEliminar(null);
+    try {
+      await api.delete(`/hospitalesexternos/${h.idHospital}`);
+      toast.success('Hospital eliminado', `Se eliminó ${h.nombre}.`);
+      cargarHospitales();
+    } catch (err) {
+      toast.error('No se pudo eliminar', mensajeDeError(err, 'No se pudo eliminar el hospital. Puede tener préstamos asociados.'));
+    }
+  };
+
+  const inpErr = (campo) => ({
+    ...inpStyle,
+    border: errores[campo] ? '1.5px solid #B93B1B' : '1.5px solid #E5EDF3',
+    background: errores[campo] ? '#FFF8F9' : '#FAFBFC'
+  });
 
   return (
     <>
-      <header className="topbar">
-        <h2>ALERTAS</h2>
-        <span className="badge" style={{background:'rgba(255,94,122,0.15)',color:'#FF5E7A',borderColor:'rgba(255,94,122,0.3)'}}>NOTIFICACIONES</span>
-        <span className="desc">Avisos del sistema sobre equipos e insumos</span>
-      </header>
-
-      <div className="page-content">
-        {}
-        <div className="rwd-grid" style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:16, marginBottom:20 }}>
-          <div style={{ background:'rgba(124,110,250,0.08)', border:'1px solid rgba(124,110,250,0.2)', borderRadius:12, padding:16 }}>
-            <div style={{ color:'#9E9CBB', fontSize:12, fontWeight:600, marginBottom:4 }}>TOTAL</div>
-            <div style={{ color:'#A89BFF', fontSize:28, fontWeight:700 }}>{kpiTotal}</div>
+      <div className="rwd-page-header" style={{ padding: '20px 24px 0', background: 'white' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+            <h2 style={{ fontSize: 16, fontWeight: 700, color: '#1a1a1a', margin: 0, letterSpacing: '0.5px' }}>GESTIÓN DE PRÉSTAMOS</h2>
+            <span style={{
+              background: 'rgba(124, 110, 250, 0.12)', color: '#5e51d6',
+              border: '1px solid rgba(124, 110, 250, 0.25)', padding: '4px 12px', borderRadius: 8,
+              fontSize: 12, fontWeight: 600
+            }}>HOSPITALES EXTERNOS</span>
+            <p style={{ fontSize: 13, color: '#5C6B7A', margin: 0 }}>Catálogo de hospitales públicos de Córdoba</p>
           </div>
-          <div style={{ background:'rgba(255,94,122,0.08)', border:'1px solid rgba(255,94,122,0.2)', borderRadius:12, padding:16 }}>
-            <div style={{ color:'#9E9CBB', fontSize:12, fontWeight:600, marginBottom:4 }}>NO LEÍDAS</div>
-            <div style={{ color:'#FF5E7A', fontSize:28, fontWeight:700 }}>{kpiNoLeidas}</div>
-          </div>
-          <div style={{ background:'rgba(245,166,35,0.08)', border:'1px solid rgba(245,166,35,0.2)', borderRadius:12, padding:16 }}>
-            <div style={{ color:'#9E9CBB', fontSize:12, fontWeight:600, marginBottom:4 }}>EN REVISIÓN</div>
-            <div style={{ color:'#F5A623', fontSize:28, fontWeight:700 }}>{kpiEnRevision}</div>
-          </div>
-          <div style={{ background:'rgba(45,212,160,0.08)', border:'1px solid rgba(45,212,160,0.2)', borderRadius:12, padding:16 }}>
-            <div style={{ color:'#9E9CBB', fontSize:12, fontWeight:600, marginBottom:4 }}>RESUELTAS</div>
-            <div style={{ color:'#2DD4A0', fontSize:28, fontWeight:700 }}>{kpiResueltas}</div>
-          </div>
+          <button onClick={abrirModalNuevo} style={btnNuevo}>+ REGISTRAR HOSPITAL</button>
         </div>
 
-        {}
-        <div className="form-card" style={{ padding: 16, marginBottom: 20 }}>
-          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', flexWrap:'wrap', gap:12 }}>
-            <div>
-              <strong style={{ color:'#A89BFF' }}>🤖 Detección automática</strong>
-              <div style={{ color:'#9E9CBB', fontSize:12, marginTop:4 }}>
-                Buscá equipos con garantía por vencer en los próximos 30 días e insumos con stock bajo.
-              </div>
-            </div>
-            <button className="btn-primary" onClick={generarAutomaticas}>🔄 Generar alertas automáticas</button>
-          </div>
-        </div>
-
-        {}
-        <div className="form-card">
-          <h3>{editando ? '✏ Editar alerta' : '+ Nueva alerta manual'}</h3>
-          <div className="form-grid">
-            <div className="form-group">
-              <label>Tipo *</label>
-              <select value={tipo} onChange={e => setTipo(e.target.value)}>
-                <option value="">Seleccionar...</option>
-                {TIPOS.map(t => <option key={t} value={t}>{t}</option>)}
-              </select>
-            </div>
-            <div className="form-group">
-              <label>Fecha de generación *</label>
-              <input type="date" value={fechaGeneracion} onChange={e => setFechaGeneracion(e.target.value)} />
-            </div>
-            <div className="form-group">
-              <label>Equipo (opcional)</label>
-              <select value={idEquipo} onChange={e => setIdEquipo(e.target.value)}>
-                <option value="">Sin equipo asociado</option>
-                {equipos.map(eq => (
-                  <option key={eq.idEquipo} value={eq.idEquipo}>
-                    {eq.modelo} ({eq.nroSerie})
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="form-group">
-              <label>Usuario reportador *</label>
-              <select value={idUsuario} onChange={e => setIdUsuario(e.target.value)}>
-                <option value="">Seleccionar...</option>
-                {usuarios.map(u => <option key={u.idUsuario} value={u.idUsuario}>{u.nombre}</option>)}
-              </select>
-            </div>
-            <div className="form-group">
-              <label>Estado</label>
-              <select value={estado} onChange={e => setEstado(e.target.value)}>
-                {ESTADOS.map(e => <option key={e} value={e}>{e}</option>)}
-              </select>
-            </div>
-          </div>
-          <div className="form-actions">
-            <button className="btn-primary" onClick={guardar}>{editando ? 'Actualizar' : 'Guardar'}</button>
-            {editando && <button className="btn-ghost" onClick={limpiar}>Cancelar</button>}
-          </div>
-        </div>
-
-        {}
-        <div className="form-card" style={{ padding:16 }}>
-          <div style={{ display:'flex', gap:12, alignItems:'center', flexWrap:'wrap' }}>
-            <select value={filtroEstado} onChange={e => setFiltroEstado(e.target.value)} style={{ minWidth:180 }}>
-              <option value="">Todos los estados</option>
-              {ESTADOS.map(e => <option key={e} value={e}>{e}</option>)}
-            </select>
-            <select value={filtroTipo} onChange={e => setFiltroTipo(e.target.value)} style={{ minWidth:220 }}>
-              <option value="">Todos los tipos</option>
-              {TIPOS.map(t => <option key={t} value={t}>{t}</option>)}
-            </select>
-            {(filtroEstado || filtroTipo) && (
-              <button className="btn-ghost" onClick={() => { setFiltroEstado(''); setFiltroTipo(''); }}>Limpiar filtros</button>
-            )}
-          </div>
-        </div>
-
-        {}
-        <div className="table-card">
-          <div className="table-header">
-            <span>{alertasFiltradas.length} {alertasFiltradas.length === 1 ? 'alerta' : 'alertas'}{alertasFiltradas.length !== alertas.length ? ` (de ${alertas.length})` : ''}</span>
-          </div>
-          <table>
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>Fecha</th>
-                <th>Tipo</th>
-                <th>Equipo</th>
-                <th>Reportador</th>
-                <th>Estado</th>
-                <th>Acciones rápidas</th>
-                <th>Acciones</th>
-              </tr>
-            </thead>
-            <tbody>
-              {alertasFiltradas.map(a => (
-                <tr key={a.idAlerta} style={{ background: a.estado === 'No leída' ? 'rgba(255,94,122,0.04)' : 'transparent' }}>
-                  <td className="td-id">#{a.idAlerta}</td>
-                  <td>{a.fechaGeneracion?.split('T')[0]}</td>
-                  <td><strong>{iconoTipo(a.tipo)} {a.tipo}</strong></td>
-                  <td>{a.equipo ? `${a.equipo.modelo} (${a.equipo.nroSerie})` : '—'}</td>
-                  <td>{a.usuario?.nombre || '—'}</td>
-                  <td><span style={chipEstado(a.estado)}>{a.estado}</span></td>
-                  <td>
-                    {a.estado === 'No leída' && (
-                      <button className="btn-ghost" style={{ fontSize: 11, padding:'4px 8px' }} onClick={() => cambiarEstadoRapido(a, 'Leída')}>Marcar leída</button>
-                    )}
-                    {(a.estado === 'No leída' || a.estado === 'Leída') && (
-                      <button className="btn-ghost" style={{ fontSize: 11, padding:'4px 8px', marginLeft:4 }} onClick={() => cambiarEstadoRapido(a, 'Resuelta')}>✓ Resolver</button>
-                    )}
-                  </td>
-                  <td>
-                    <button className="btn-edit" onClick={() => editar(a)}>✏</button>
-                    <button className="btn-delete" onClick={() => eliminar(a.idAlerta)}>✕</button>
-                  </td>
-                </tr>
-              ))}
-              {alertasFiltradas.length === 0 && (
-                <tr><td colSpan="8" className="empty">
-                  {alertas.length === 0 ? 'No hay alertas registradas.' : 'No hay alertas que coincidan con los filtros.'}
-                </td></tr>
-              )}
-            </tbody>
-          </table>
+        <div style={{ marginTop: 18, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <input
+            type="text" placeholder="Buscar por nombre o localidad..."
+            aria-label="Buscar hospital"
+            value={busqueda} onChange={e => setBusqueda(e.target.value)}
+            style={{ ...inpStyle, maxWidth: 320 }}
+          />
+          {busqueda.trim() && (
+            <button
+              onClick={() => setBusqueda('')}
+              style={{
+                background: 'transparent', border: '1px solid #E5EDF3', borderRadius: 8,
+                padding: '8px 12px', fontSize: 12, color: '#2C7DA0', fontWeight: 600, cursor: 'pointer'
+              }}
+            >Limpiar filtros</button>
+          )}
         </div>
       </div>
+
+      <div className="rwd-table-wrap" style={{ padding: '20px 24px', background: 'white', overflowX: 'auto' }}>
+        <table className="rwd-table" style={{ width: '100%', borderCollapse: 'collapse', minWidth: 720 }}>
+          <thead>
+            <tr>
+              <th style={thStyle}>Nombre</th>
+              <th style={thStyle}>Localidad</th>
+              <th style={thStyle}>Contacto</th>
+              <th style={thStyle}>Teléfono</th>
+              <th style={thStyle}>Email</th>
+              <th style={thStyle}>Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            {hospitalesFiltrados.map((h, idx) => {
+              const fondo = idx % 2 === 1 ? '#F8FAFC' : 'white';
+              return (
+                <tr
+                  key={h.idHospital}
+                  style={{ borderBottom: '1px solid #F1F4F7', background: fondo, transition: 'background 0.1s' }}
+                  onMouseOver={(e) => e.currentTarget.style.background = '#F0F6FA'}
+                  onMouseOut={(e) => e.currentTarget.style.background = fondo}
+                >
+                  <td style={{ ...tdStyle, fontWeight: 600 }}>{h.nombre}</td>
+                  <td style={tdStyle}>{h.localidad || '—'}</td>
+                  <td style={tdStyle}>{h.contacto || '—'}</td>
+                  <td style={tdStyle}>{h.telefono || '—'}</td>
+                  <td style={tdStyle}>{h.email || '—'}</td>
+                  <td style={tdStyle}>
+                    <button className="btn-edit" onClick={() => abrirModalEditar(h)}
+                      title="Editar hospital" aria-label={`Editar ${h.nombre}`} style={{ marginRight: 6 }}>✏</button>
+                    <button className="btn-delete" onClick={() => eliminar(h)}
+                      title="Eliminar hospital" aria-label={`Eliminar ${h.nombre}`}>✕</button>
+                  </td>
+                </tr>
+              );
+            })}
+            {hospitalesFiltrados.length === 0 && (
+              <tr><td colSpan="6" style={{ textAlign: 'center', padding: 40, color: '#5C6B7A', fontSize: 13 }}>
+                {hospitales.length === 0 ? 'No hay hospitales cargados.' : 'No hay hospitales que coincidan con la búsqueda.'}
+              </td></tr>
+            )}
+          </tbody>
+        </table>
+
+        <p style={{ fontSize: 12, color: '#5C6B7A', margin: '16px 0 0', textAlign: 'left' }}>
+          {hospitalesFiltrados.length} {hospitalesFiltrados.length === 1 ? 'registro' : 'registros'}
+          {hospitalesFiltrados.length !== hospitales.length ? ` (de ${hospitales.length})` : ''}
+        </p>
+      </div>
+
+      {modalAbierto && (
+        <div onClick={cerrarModal} className="rwd-modal-overlay" style={overlayStyle}>
+          <div onClick={e => e.stopPropagation()} className="rwd-modal-box" style={{ ...modalStyle, maxWidth: 560 }}>
+            <div style={modalHeaderStyle}>
+              <div style={{ width: 52, height: 52, borderRadius: 12, background: 'linear-gradient(135deg, #EEF3FB 0%, #DCE7F5 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24 }}>🏥</div>
+              <div style={{ flex: 1 }}>
+                <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: '#1a1a1a' }}>{editando ? 'Editar hospital' : 'Nuevo hospital externo'}</h3>
+                <p style={{ margin: '4px 0 0', color: '#5C6B7A', fontSize: 13 }}>Datos del hospital receptor de préstamos</p>
+              </div>
+              <button onClick={cerrarModal} style={btnCerrarX} title="Cerrar (Esc)" aria-label="Cerrar">✕</button>
+            </div>
+
+            <div style={{ padding: '20px 28px 24px' }}>
+              {errores.__general && <div style={bannerError}>⚠ {errores.__general}</div>}
+
+              <label style={lblStyle}>Nombre *</label>
+              <input
+                value={nombre} onChange={e => cambiarCampo('nombre', e.target.value, setNombre)}
+                placeholder="Ej: Hospital Córdoba" maxLength={150} style={inpErr('nombre')}
+              />
+              {errores.nombre && <span style={errStyle}>⚠ {errores.nombre}</span>}
+
+              <div className="rwd-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginTop: 14 }}>
+                <div>
+                  <label style={lblStyle}>Localidad</label>
+                  <input value={localidad} onChange={e => cambiarCampo('localidad', e.target.value, setLocalidad)}
+                    placeholder="Ej: Córdoba Capital" maxLength={100} style={inpErr('localidad')} />
+                  {errores.localidad && <span style={errStyle}>⚠ {errores.localidad}</span>}
+                </div>
+                <div>
+                  <label style={lblStyle}>Dirección</label>
+                  <input value={direccion} onChange={e => cambiarCampo('direccion', e.target.value, setDireccion)}
+                    placeholder="Ej: Av. Patria 656" maxLength={200} style={inpErr('direccion')} />
+                  {errores.direccion && <span style={errStyle}>⚠ {errores.direccion}</span>}
+                </div>
+                <div>
+                  <label style={lblStyle}>Contacto</label>
+                  <input value={contacto} onChange={e => cambiarCampo('contacto', e.target.value, setContacto)}
+                    placeholder="Ej: Ing. Juan Pérez" maxLength={100} style={inpErr('contacto')} />
+                  {errores.contacto && <span style={errStyle}>⚠ {errores.contacto}</span>}
+                </div>
+                <div>
+                  <label style={lblStyle}>Teléfono</label>
+                  <input type="tel" value={telefono} onChange={e => cambiarCampo('telefono', e.target.value, setTelefono)}
+                    placeholder="Ej: +54 351 000-0000" maxLength={30} style={inpErr('telefono')} />
+                  {errores.telefono && <span style={errStyle}>⚠ {errores.telefono}</span>}
+                </div>
+                <div style={{ gridColumn: '1 / -1' }}>
+                  <label style={lblStyle}>Email</label>
+                  <input type="email" value={email} onChange={e => cambiarCampo('email', e.target.value, setEmail)}
+                    placeholder="Ej: bioingenieria@hospital.gob.ar" maxLength={100} style={inpErr('email')} />
+                  {errores.email && <span style={errStyle}>⚠ {errores.email}</span>}
+                </div>
+              </div>
+            </div>
+
+            <div style={modalFooterStyle}>
+              <button onClick={cerrarModal} style={btnGhost}>Cancelar</button>
+              <button
+                onClick={guardar} disabled={guardando}
+                style={{ ...btnSave, opacity: guardando ? 0.6 : 1, cursor: guardando ? 'not-allowed' : 'pointer' }}
+              >
+                {guardando ? 'Guardando…' : (editando ? '✓ Actualizar hospital' : '✓ Agregar hospital')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <ConfirmarDialogo
+        abierto={!!hospitalAEliminar}
+        titulo="¿Eliminar hospital?"
+        mensaje={hospitalAEliminar ? `Se eliminará "${hospitalAEliminar.nombre}" del catálogo. Esta acción no se puede deshacer.` : ''}
+        textoConfirmar="Eliminar"
+        onConfirmar={confirmarEliminar}
+        onCancelar={() => setHospitalAEliminar(null)}
+      />
     </>
   );
 }
 
-export default Alertas;
+const thStyle = { fontSize: 11, fontWeight: 600, color: '#5C6B7A', padding: '12px 8px', borderBottom: '1px solid #E5EDF3', textTransform: 'uppercase', letterSpacing: '0.4px', textAlign: 'left' };
+const tdStyle = { padding: '14px 8px', fontSize: 13, color: '#2D3748', whiteSpace: 'nowrap' };
+const lblStyle = { display: 'block', fontSize: 11, fontWeight: 600, color: '#4A5868', marginBottom: 6 };
+const inpStyle = { width: '100%', padding: '10px 12px', border: '1.5px solid #E5EDF3', borderRadius: 8, fontSize: 13, background: '#FAFBFC', outline: 'none', boxSizing: 'border-box' };
+const errStyle = { display: 'block', color: '#B93B1B', fontSize: 11, marginTop: 6, fontWeight: 500 };
+const btnNuevo = { background: '#F0F6FA', color: '#4A5868', border: 'none', borderRadius: 6, padding: '10px 16px', fontSize: 11, fontWeight: 500, letterSpacing: '0.06em', textTransform: 'uppercase', cursor: 'pointer' };
+const btnGhost = { background: 'white', color: '#5C6B7A', border: '1px solid #E5EDF3', padding: '10px 18px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer' };
+const btnSave = { background: 'linear-gradient(135deg, #2C7DA0 0%, #4A9BB8 100%)', color: 'white', border: 'none', padding: '10px 20px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer' };
+const btnCerrarX = { background: '#F4F7FA', border: 'none', width: 32, height: 32, borderRadius: 8, fontSize: 18, cursor: 'pointer', color: '#5C6B7A' };
+const overlayStyle = { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(20,25,40,0.6)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 20 };
+const modalStyle = { background: 'white', borderRadius: 16, width: '100%', maxHeight: '92vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' };
+const modalHeaderStyle = { padding: '24px 28px 20px', borderBottom: '1px solid #F0F3F7', display: 'flex', alignItems: 'center', gap: 16 };
+const modalFooterStyle = { padding: '16px 28px', borderTop: '1px solid #F0F3F7', background: '#FAFBFC', borderBottomLeftRadius: 16, borderBottomRightRadius: 16, display: 'flex', justifyContent: 'flex-end', gap: 10 };
+const bannerError = { background: '#FDECEE', border: '1px solid #F5C2C7', color: '#842029', padding: '12px 14px', borderRadius: 10, fontSize: 13, marginBottom: 16 };
+
+export default HospitalesExternos;
